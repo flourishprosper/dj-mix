@@ -1,5 +1,5 @@
 """Terminal interface: pick a folder, set options, preview the plan, render."""
-import os
+import os, time
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -46,9 +46,9 @@ def row(label, widget):
 class DJMix(App):
     TITLE = "dj-mix"
     CSS = """
-    #browser { width: 32; border-right: solid $panel; }
-    #browser Static { padding: 0 1; color: $text-muted; }
-    #options { width: 52; border-right: solid $panel; padding: 0 1; }
+    #left { width: 56; border-right: solid $panel; }
+    #browser { height: 12; border: round $panel; border-title-color: $text-muted; margin: 0 1; }
+    #options { height: 1fr; padding: 0 1; }
     .section { margin: 1 0 0 0; color: $accent; text-style: bold; }
     .row { height: auto; }
     .row .lbl { width: 20; padding: 1 1 0 0; color: $text-muted; }
@@ -68,6 +68,11 @@ class DJMix(App):
                 ("r", "render", "Render"), ("q", "quit", "Quit")]
 
     def __init__(self, folder=None):
+        # Analysis uses a process pool. Its helper process is handed the real
+        # stderr, which Textual replaces once the app runs (fileno() = -1 ->
+        # "bad value(s) in fds_to_keep"). Start the helper now, before that.
+        from multiprocessing import resource_tracker
+        resource_tracker.ensure_running()
         super().__init__()
         self.cfg = config.load()
         self.ui = self.cfg.get("ui", {})
@@ -82,52 +87,53 @@ class DJMix(App):
         preset = ui.get("preset", DEFAULT_PRESET)
         yield Header()
         with Horizontal():
-            with Vertical(id="browser"):
-                yield Static("Music folders — Enter to open")
-                yield FolderTree(root, id="tree")
-            with VerticalScroll(id="options"):
-                yield row("Folder", Input(self.start_folder, id="folder", placeholder="path to a folder of tracks"))
+            with Vertical(id="left"):
+                tree = FolderTree(root, id="browser")
+                tree.border_title = "Music folders · Enter to open"
+                yield tree
+                with VerticalScroll(id="options"):
+                    yield row("Folder", Input(self.start_folder, id="folder", placeholder="path to a folder of tracks"))
 
-                yield Label("Mixing", classes="section")
-                yield row("Preset", Select([(k, k) for k in PRESETS],
-                                           value=preset, allow_blank=False, id="preset"))
-                yield Static(PRESETS[preset].description, id="preset_desc")
-                yield row("Transition (bars)", Select([(str(n), n) for n in (2, 4, 8, 16, 32)],
-                                                      value=ui.get("bars", PRESETS[preset].bars),
-                                                      allow_blank=False, id="bars"))
-                yield row("Tempo lean (BPM)", Input(str(ui.get("bpm", "")), id="bpm", type="number",
-                                                    placeholder=f"preset: {PRESETS[preset].bpm_center:g}"))
-                yield row("Loudness (LUFS)", Input(str(ui.get("lufs", -14.0)), id="lufs", type="number"))
-                yield row("Seed", Input("", id="seed", type="integer", placeholder="random"))
-                yield row("Cut choppy endings", Switch(ui.get("cut", PRESETS[preset].cut_breakdowns), id="cut"))
+                    yield Label("Mixing", classes="section")
+                    yield row("Preset", Select([(k, k) for k in PRESETS],
+                                               value=preset, allow_blank=False, id="preset"))
+                    yield Static(PRESETS[preset].description, id="preset_desc")
+                    yield row("Transition (bars)", Select([(str(n), n) for n in (2, 4, 8, 16, 32)],
+                                                          value=ui.get("bars", PRESETS[preset].bars),
+                                                          allow_blank=False, id="bars"))
+                    yield row("Tempo lean (BPM)", Input(str(ui.get("bpm", "")), id="bpm", type="number",
+                                                        placeholder=f"preset: {PRESETS[preset].bpm_center:g}"))
+                    yield row("Loudness (LUFS)", Input(str(ui.get("lufs", -14.0)), id="lufs", type="number"))
+                    yield row("Seed", Input("", id="seed", type="integer", placeholder="random"))
+                    yield row("Cut choppy endings", Switch(ui.get("cut", PRESETS[preset].cut_breakdowns), id="cut"))
 
-                yield Label("Output", classes="section")
-                yield row("Video", Select([], id="video", prompt="(no video in folder)"))
-                yield row("Title cards", Switch(ui.get("titles", True), id="titles"))
+                    yield Label("Output", classes="section")
+                    yield row("Video", Select([], id="video", prompt="(no video in folder)"))
+                    yield row("Title cards", Switch(ui.get("titles", True), id="titles"))
 
-                yield Label("Brand", classes="section")
-                credits = b.credits + ["", ""]
-                yield row("Credit line 1", Input(credits[0], id="credit1"))
-                yield row("Credit line 2", Input(credits[1], id="credit2"))
-                yield color_row("Accent color", Input(b.accent, id="accent"))
-                yield color_row("Text color", Input(b.text_color, id="text_color"))
-                yield row("Font file", Input(b.font or "", id="font", placeholder="default: Avenir Next"))
-                kind = "image" if b.watermark_image else "text" if b.watermark_text else "none"
-                yield row("Watermark", Select([("None", "none"), ("Text", "text"), ("Logo image", "image")],
-                                              value=kind, allow_blank=False, id="wm_kind"))
-                yield row("Watermark text", Input(b.watermark_text or "", id="wm_text"))
-                yield row("Logo image path", Input(b.watermark_image or "", id="wm_image",
-                                                   placeholder="PNG with transparency"))
-                yield row("Position", Select([(p, p) for p in POSITIONS], value=b.watermark_pos,
-                                             allow_blank=False, id="wm_pos"))
-                yield row("Size (0-1)", Input(str(b.watermark_size), id="wm_size", type="number"))
-                yield row("Opacity (0-1)", Input(str(b.watermark_opacity), id="wm_opacity", type="number"))
-                yield row("Margin (0-1)", Input(str(b.watermark_margin), id="wm_margin", type="number"))
+                    yield Label("Brand", classes="section")
+                    credits = b.credits + ["", ""]
+                    yield row("Credit line 1", Input(credits[0], id="credit1"))
+                    yield row("Credit line 2", Input(credits[1], id="credit2"))
+                    yield color_row("Accent color", Input(b.accent, id="accent"))
+                    yield color_row("Text color", Input(b.text_color, id="text_color"))
+                    yield row("Font file", Input(b.font or "", id="font", placeholder="default: Avenir Next"))
+                    kind = "image" if b.watermark_image else "text" if b.watermark_text else "none"
+                    yield row("Watermark", Select([("None", "none"), ("Text", "text"), ("Logo image", "image")],
+                                                  value=kind, allow_blank=False, id="wm_kind"))
+                    yield row("Watermark text", Input(b.watermark_text or "", id="wm_text"))
+                    yield row("Logo image path", Input(b.watermark_image or "", id="wm_image",
+                                                       placeholder="PNG with transparency"))
+                    yield row("Position", Select([(p, p) for p in POSITIONS], value=b.watermark_pos,
+                                                 allow_blank=False, id="wm_pos"))
+                    yield row("Size (0-1)", Input(str(b.watermark_size), id="wm_size", type="number"))
+                    yield row("Opacity (0-1)", Input(str(b.watermark_opacity), id="wm_opacity", type="number"))
+                    yield row("Margin (0-1)", Input(str(b.watermark_margin), id="wm_margin", type="number"))
 
-                with Horizontal(id="buttons"):
-                    yield Button("Analyze [a]", id="analyze")
-                    yield Button("Plan [p]", id="plan", variant="primary")
-                    yield Button("Render [r]", id="render", variant="success")
+                    with Horizontal(id="buttons"):
+                        yield Button("Analyze [a]", id="analyze")
+                        yield Button("Plan [p]", id="plan", variant="primary")
+                        yield Button("Render [r]", id="render", variant="success")
             with Vertical():
                 with TabbedContent(id="tabs"):
                     with TabPane("Tracks", id="tab-tracks"):
@@ -189,7 +195,7 @@ class DJMix(App):
         )
 
     def remember(self):
-        self.cfg["ui"] = dict(folder=self.val("folder"), root=str(self.query_one("#tree").path),
+        self.cfg["ui"] = dict(folder=self.val("folder"), root=str(self.query_one("#browser").path),
                               preset=self.val("preset"), bars=int(self.val("bars")),
                               bpm=self.val("bpm"), lufs=self.val("lufs"), cut=self.val("cut"),
                               titles=self.val("titles"))
@@ -227,7 +233,7 @@ class DJMix(App):
         if event.input.id in COLOR_FIELDS:
             self.update_swatch(event.input.id)
 
-    @on(DirectoryTree.DirectorySelected, "#tree")
+    @on(DirectoryTree.DirectorySelected, "#browser")
     def picked(self, event):
         self.load_folder(str(event.path))
 
@@ -266,11 +272,29 @@ class DJMix(App):
             self.notify(f"Check the numbers in the form: {e}", severity="error")
             return False
         self.busy = True
+        self.job, self.job_start, self.job_frac = what, time.monotonic(), 0.0
         self.status(what)
+        self.ticker = self.set_interval(1, self.tick)
         return True
+
+    def elapsed(self):
+        return time.monotonic() - self.job_start
+
+    def tick(self):
+        """Running clock while a job works: elapsed, and for renders % + time left."""
+        el = self.elapsed()
+        msg = f"{self.job}  [b]{fmt_time(el)}[/b] elapsed"
+        if self.job_frac > 0.02:
+            msg += f"  ·  {self.job_frac:.0%}  ·  ~{fmt_time(el / self.job_frac - el)} left"
+        self.status(msg)
+
+    def set_frac(self, f):
+        self.job_frac = f
+        self.query_one("#progress", ProgressBar).update(progress=round(100 * f))
 
     def done(self, msg):
         self.busy = False
+        self.ticker.stop()
         self.status(msg)
 
     # ------------------------------------------------------------ jobs
@@ -364,13 +388,14 @@ class DJMix(App):
             res = pipeline.mix(folder, settings, brand=brand, titles=titles, video=video,
                                audio_only=audio_only or video is None,
                                log=lambda m: self.call_from_thread(self.log_line, m),
-                               progress=lambda f: self.call_from_thread(bar.update, progress=round(100 * f)))
+                               progress=lambda f: self.call_from_thread(self.set_frac, f))
         except Exception as e:
             self.call_from_thread(self.failed, e)
             return
         out = res.get("video") or res.get("audio")
         self.call_from_thread(bar.update, progress=100)
-        self.call_from_thread(self.done, f"Done: {os.path.basename(out)} ({fmt_time(res['duration'])})")
+        self.call_from_thread(self.done, f"Done: {os.path.basename(out)} ({fmt_time(res['duration'])} mix) "
+                                         f"— rendered in [b]{fmt_time(res['elapsed'])}[/b]")
         self.call_from_thread(self.notify, f"Saved {out}", timeout=10)
 
     def failed(self, e):

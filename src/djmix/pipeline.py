@@ -27,6 +27,7 @@ def plan(folder, settings, log=print):
 def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=False,
         log=print, progress=None):
     """Full render. Returns dict of output paths and stats."""
+    t0 = time.monotonic()
     seed, order, _, _ = plan(folder, settings, log)
     log(f"{settings.bars}-bar transitions, preset {settings.preset.name}, seed {seed}")
     for i, t in enumerate(order, 1):
@@ -36,7 +37,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
     wav = base + ".wav"
     log("Rendering audio...")
     dur, chapters, notes = render(folder, order, settings, wav, log=log,
-                                  on_track=(lambda i, n: progress(0.5 * i / n)) if progress else None)
+                                  on_track=(lambda i, n: progress((1 if audio_only else 0.5) * i / n)) if progress else None)
 
     tracklist = base + "_tracklist.txt"
     with open(tracklist, "w") as f:
@@ -50,7 +51,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
     if audio_only:
         result["audio"] = wav
         log(f"Audio: {wav}")
-        return result
+        return finish(result, t0, log)
 
     if video is None:
         vids = list_videos(folder)
@@ -66,4 +67,13 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
     os.remove(wav)
     result["video"] = out
     log(f"Done: {out}")
+    return finish(result, t0, log)
+
+
+def finish(result, t0, log):
+    """Record how long the render took: logged, returned, and saved in the tracklist."""
+    result["elapsed"] = time.monotonic() - t0
+    log(f"Rendered in {fmt_time(result['elapsed'])}")
+    with open(result["tracklist"], "a") as f:
+        f.write(f"(rendered in {fmt_time(result['elapsed'])} on {time.strftime('%Y-%m-%d %H:%M')})\n")
     return result
