@@ -7,7 +7,7 @@ with title cards and a text watermark, capturing each step to docs/images/,
 plus a still of the finished video. Your saved settings are restored after,
 and the rendered mix is deleted unless --keep.
 """
-import argparse, asyncio, glob, os, shutil, subprocess, sys, time
+import argparse, asyncio, glob, os, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "images")
@@ -55,6 +55,24 @@ async def drive(folder, name, render=True):
         await until(lambda: not app.busy)
         app.save_screenshot(filename="done.svg", path=OUT)
 
+        # promo: newest render is preselected; tick three songs, wait for clip times
+        app.query_one("#tabs").active = "tab-promo"
+        await pilot.pause(0.5)
+        t = app.query_one("#promo_table")
+        t.focus()
+        await until(lambda: t.row_count and all("…" not in str(t.get_row_at(r)[3]) for r in range(t.row_count)))
+        for r in (1, 4, 7):
+            t.move_cursor(row=r)
+            await pilot.press("enter")
+        t.move_cursor(row=0)
+        await pilot.pause(0.5)
+        app.save_screenshot(filename="promo.svg", path=OUT)
+        await pilot.press("e")
+        await until(lambda: not app.busy)
+        app.query_one("#tabs").active = "tab-history"
+        await pilot.pause(0.5)
+        app.save_screenshot(filename="history.svg", path=OUT)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -72,10 +90,21 @@ def main():
     cfg.pop("ui", None)                          # start from defaults, not your last session
     config.save(cfg)
     before = set(glob.glob(os.path.join(folder, "MIX_*")))
+    # the run adds a render + promos to the folder's history; put it back afterwards
+    hist = os.path.join(folder, "_dj-mix")
+    hist_backup = tempfile.mkdtemp()
+    if os.path.isdir(hist):
+        shutil.copytree(hist, os.path.join(hist_backup, "h"))
     try:
         asyncio.run(drive(folder, args.name, render=not args.no_render))
     finally:
         config.save(backup)
+        if os.path.isdir(os.path.join(hist_backup, "h")):
+            for name in ("history.json", "log.txt"):
+                src = os.path.join(hist_backup, "h", name)
+                if os.path.exists(src):
+                    shutil.copy2(src, os.path.join(hist, name))
+        shutil.rmtree(hist_backup, ignore_errors=True)
 
     if args.no_render:
         return
@@ -89,7 +118,7 @@ def main():
                     "-q:v", "3", os.path.join(OUT, "video-frame.jpg")], check=True)
     if not args.keep:
         for f in new:
-            os.remove(f)
+            shutil.rmtree(f) if os.path.isdir(f) else os.remove(f)
     print("Wrote", ", ".join(sorted(os.listdir(OUT))))
 
 

@@ -1,6 +1,6 @@
 """Per-track analysis: tempo, beats, downbeat energy, key, loudness, breakdowns.
 
-Results are cached in <folder>/_dj-analysis.json, keyed on file size/mtime
+Results are cached in <folder>/_dj-mix/analysis.json, keyed on file size/mtime
 and on the tempo prior (a different preset can change the detected tempo).
 """
 import json, os
@@ -14,7 +14,7 @@ from .util import PITCHES, camelot, integrated_lufs, list_tracks, song_id
 ASR = 22050           # analysis rate
 HOP = 256
 FPS = ASR / HOP
-CACHE = "_dj-analysis.json"
+LEGACY_CACHE = "_dj-analysis.json"   # pre-history location, migrated on first use
 CACHE_VERSION = 4
 
 # Krumhansl-Schmuckler key profiles
@@ -144,7 +144,11 @@ def active_end(t, cut_breakdowns):
 
 
 def analyze_folder(folder, tempo_prior=(88, 0.35, 50, 200), progress=print):
-    cache_path = os.path.join(folder, CACHE)
+    from . import history
+    cache_path = history.path(folder, "analysis.json")
+    legacy = os.path.join(folder, LEGACY_CACHE)
+    if not os.path.exists(cache_path) and os.path.exists(legacy):
+        os.replace(legacy, cache_path)
     try:
         cache = json.load(open(cache_path))
     except (OSError, ValueError):

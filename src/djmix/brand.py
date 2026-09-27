@@ -45,9 +45,11 @@ def _rgba(color, alpha=255):
     return ImageColor.getrgb(color)[:3] + (alpha,)
 
 
-def make_card(title, brand, w, h, out_png):
-    """Lower-left 'now playing' card: title, credit lines, accent bar, soft shadow."""
-    s = w / 1280                                     # layout designed at 1280x720
+def make_card(title, brand, w, h, out_png, scale=1.0, top=None):
+    """Lower-left 'now playing' card: title, credit lines, accent bar, soft shadow.
+    scale > 1 enlarges it (e.g. for phone-sized vertical clips); top places it at
+    a given y instead of the bottom of the frame."""
+    s = w / 1280 * scale                             # layout designed at 1280x720
     lines = [(title, _font(brand, round(40 * s), "title"), 255)]
     for n, credit in enumerate(brand.credits):
         lines.append((credit, _font(brand, round((20 if n == 0 else 18) * s), "credit" if n == 0 else "small"),
@@ -56,7 +58,7 @@ def make_card(title, brand, w, h, out_png):
     heights = [f.getbbox(t)[3] for t, f, _ in lines]
     block = sum(heights) + sum(gaps[:-1])
     x = round(64 * s)
-    y = h - round(30 * s) - block
+    y = h - round(30 * s) - block if top is None else top
 
     text = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))

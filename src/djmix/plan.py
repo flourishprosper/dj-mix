@@ -158,18 +158,57 @@ def describe(tr, settings):
     return "plain 8s crossfade (tempo gap or unstable beats)"
 
 
-def dry_run(order, settings):
-    """Plan every transition without rendering. Returns (steps, est. length s)."""
-    steps, written = [], 0
-    for st in walk(order, settings, lambda t, r: int(t["duration"] * r * SR)):
-        written += st["s"] - st["pos"]
-        st["at"] = (written + st["L"] // 2) / SR
-        written += st["L"]
-        steps.append(st)
+class Timeline:
+    """Where every track sits in the finished mix, in mix samples. Shared by
+    the renderer and the dry run so they can never disagree.
+
+    Per track: start (starts fading in), full_in (playing alone), out_start
+    (starts fading out), end (gone), chapter (middle of its incoming
+    transition), and shift/ratio to map the track's own time to mix time:
+    mix_sample = native_seconds * ratio * SR + shift."""
+
+    def __init__(self, order):
+        self.written = 0
+        self.segs = [dict(file=order[0]["file"], start=0, full_in=0, chapter=0, shift=0, ratio=1.0)]
+
+    def transition(self, st):
+        """Call before writing a transition; returns the mix sample it starts at."""
+        ws = self.written + st["s"] - st["pos"]
+        L = st["L"]
+        self.segs[-1].update(out_start=ws, end=ws + L)
+        self.segs.append(dict(file=st["b"]["file"], start=ws, full_in=ws + L, chapter=ws + L // 2,
+                              shift=ws - st["e"], ratio=st["rb"]))
+        self.written = ws + L
+        return ws
+
+    def finish(self, pos, end):
+        self.written += end - pos
+        self.segs[-1].update(out_start=self.written, end=self.written)
+
+    def seconds(self):
+        keys = ("start", "full_in", "out_start", "end", "chapter", "shift")
+        return [{k: (v / SR if k in keys else v) for k, v in seg.items()} for seg in self.segs]
+
+
+def last_track_end(order, settings, len_last, pos, ra):
+    """Where the last track stops (before any breakdown, if cutting)."""
     last = order[-1]
-    ra = steps[-1]["rb"] if steps else 1.0
-    pos = steps[-1]["e"] + steps[-1]["L"] if steps else 0
-    end = int(last["duration"] * ra * SR)
+    end = len_last
     if settings.cut_breakdowns and last["clean_end"] < last["duration"] - 1:
         end = max(pos, min(end, int(last["clean_end"] * ra * SR)))
-    return steps, (written + end - pos) / SR
+    return end
+
+
+def dry_run(order, settings):
+    """Plan every transition without rendering.
+    Returns (steps, estimated length s, timeline segments in seconds)."""
+    steps, tl = [], Timeline(order)
+    for st in walk(order, settings, lambda t, r: int(t["duration"] * r * SR)):
+        ws = tl.transition(st)
+        st["at"] = (ws + st["L"] // 2) / SR
+        steps.append(st)
+    ra = steps[-1]["rb"] if steps else 1.0
+    pos = steps[-1]["e"] + steps[-1]["L"] if steps else 0
+    end = last_track_end(order, settings, int(order[-1]["duration"] * ra * SR), pos, ra)
+    tl.finish(pos, end)
+    return steps, tl.written / SR, tl.seconds()

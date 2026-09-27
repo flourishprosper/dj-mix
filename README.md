@@ -44,6 +44,7 @@ and it does the fiddly parts better than a quick crossfade ever could:
 | Order | random | **harmonic** (Camelot wheel), tempo-aware, never two takes of the same song back to back |
 | Bad endings | plays the glitchy tail | detects **choppy AI-generated breakdowns** and mixes out before them |
 | Video | separate job | looped visual, **title card per song**, **watermark**, YouTube **chapter list** |
+| Promotion | re-edit every song by hand | **30 s vertical/square clips per song**, cut from the finished mix |
 
 And it's honest about its limits: when two tracks can't be matched cleanly, it tells you and falls back to a
 smooth crossfade instead of a trainwreck.
@@ -57,6 +58,8 @@ smooth crossfade instead of a trainwreck.
 - 🧠 **Set planning** — orders tracks by key compatibility and tempo, keeps alternate takes of a song apart (it reads the embedded title tag, so renaming files doesn't fool it).
 - ✂️ **Breakdown detection** — spots where a track degrades into flickering "packets" of sound and cuts it.
 - 🎬 **Video in the same pass** — loops your clip for the length of the mix, adds a "now playing" card for every song, your watermark or logo, and writes a tracklist you can paste straight into YouTube as chapters.
+- 📱 **Promo clips in one click** — cut 30-second vertical, square or widescreen clips of any songs straight from the finished mix, each from where that song plays alone, starting on a downbeat.
+- 🗂️ **Every folder remembers** — reopen a folder and you're back where you left off: last settings, last plan, every past render, and every promo you've cut.
 - 🖥️ **A proper interface** — pick a folder, tweak options, *preview the whole set* before rendering, watch a live progress clock.
 - 🎚️ **Genre presets** — `lofi`, `hiphop`, `house`, `techno`, `dnb`, `pop`, `auto`.
 - 🔁 **Reproducible** — every mix has a seed; the same seed renders the identical set.
@@ -236,6 +239,50 @@ Paste the tracklist into your YouTube description and YouTube turns it into **ch
 
 🎉 That's your first mix.
 
+### Step 9 — Cut promo clips for social
+
+Open the **Promo** tab (it unlocks once a mix has been rendered). Pick the render, tick the songs you want
+(**Enter** or click a row, or **All**), set the length and format, and press **`e`** to export:
+
+![Promo tab: pick a render, tick songs, see exactly where each clip will be cut, export](docs/images/promo.svg)
+
+For each song, dj-mix cuts the clip from the **finished mix video**, not the source files, so it carries the
+mix's sound, visuals and watermark. The clip comes from the part where that song **plays alone**, so no
+neighbouring track bleeds in. It starts **on a downbeat**, skips the moment the mix's own title card is on
+screen, and picks the **most energetic stretch**. The *Clip* column shows exactly what you'll get before you export.
+
+| Format | Size | For |
+|---|---|---|
+| **Vertical 9:16** | 1080×1920 | Reels, TikTok, Shorts |
+| **Square 1:1** | 1080×1080 | feed posts |
+| **Original 16:9** | same as the mix | YouTube, X, anywhere |
+
+Vertical and square clips fit the whole frame over a blurred fill (so the watermark and cards aren't cropped
+off), with a big title card underneath. Every clip fades in and out. They're saved in a folder next to the
+mix: `MIX_<date>_promo/02 Twang in the Shade (vertical, 30s).mp4`.
+
+### Step 10 — Come back any time
+
+Every folder remembers what you did there. Reopen it and dj-mix restores your last settings and seed, and
+shows the plan you left off on. The **History** tab lists every render with its length, seed, settings, render
+time and promo count:
+
+![History tab: every render made in this folder](docs/images/history.svg)
+
+Select a row to load that render's settings (to re-render it or tweak it) and pick it in the Promo tab. So you
+can cut new promo clips from a mix you made weeks ago. Mixes rendered before history existed are added
+automatically: their song timeline is rebuilt from the seed in their tracklist.
+
+All of this lives in a small hidden folder inside your music folder:
+
+```
+Late Night Cruise/
+└── _dj-mix/
+    ├── history.json    every render and promo, and your last settings here
+    ├── log.txt         a plain-text diary of everything done in this folder
+    └── analysis.json   cached track analysis (instant reopen)
+```
+
 ---
 
 ## 🧭 Feature tour
@@ -289,6 +336,8 @@ dj-mix ui FOLDER                # open the interface in a folder
 dj-mix analyze FOLDER           # per-track report
 dj-mix plan FOLDER              # order + every transition, no rendering
 dj-mix mix FOLDER [options]     # render the mix (and video)
+dj-mix promo FOLDER [options]   # cut promo clips of songs from a rendered mix
+dj-mix history FOLDER           # every render and promo made in a folder
 dj-mix titles MIX.mp4           # add title cards / watermark to an existing mix video
 ```
 
@@ -311,7 +360,21 @@ dj-mix titles MIX.mp4           # add title cards / watermark to an existing mix
 | `--audio-only` | WAV only, no video |
 | `--titles` | title card at each song |
 
-**Brand / watermark options** (`mix`, `titles`)
+**Promo options** (`promo`)
+
+| Flag | Default | |
+|---|---|---|
+| `--render NAME` | newest | which mix to cut from (file name or history id) |
+| `--songs 1,4,7` | all | song numbers in mix order |
+| `--length N` | 30 | clip length in seconds |
+| `--format` | `vertical` | `vertical` (9:16), `square` (1:1), `original` |
+| `--no-card` | | clips without a title card |
+
+```sh
+dj-mix promo ~/Music/"Late Night Cruise" --songs 2,6,9 --format vertical
+```
+
+**Brand / watermark options** (`mix`, `titles`, `promo`)
 
 | Flag | Default | |
 |---|---|---|
@@ -356,6 +419,8 @@ dj-mix mix ~/Music/friday-house --preset house --titles \
 4. **Render.** Decode → rubberband time-stretch → loudness match → write one continuous 48 kHz float WAV.
 5. **Encode.** Loop the clip, overlay the watermark and title cards (drawn with Pillow, faded by ffmpeg),
    limit peaks to -1 dB, encode H.264 + AAC, stop exactly at the end of the audio.
+6. **Remember.** The render is saved to the folder's history with a timeline of where every song sits in the
+   mix (fading in, playing alone, fading out, and its downbeats), which is what promo clips are cut from.
 
 ---
 
@@ -435,6 +500,8 @@ uv run dj-mix          # run from the checkout
 | `plan.py` | ordering, downbeat/phrase picking, transition planning, dry run |
 | `render.py` | decode, stretch, gain, EQ transitions |
 | `video.py` / `brand.py` | video encode; title cards and watermark |
+| `promo.py` | song timelines in a mix, clip placement, promo export |
+| `history.py` | per-folder history, log and resume |
 | `presets.py` | **genre presets — start here to add a genre** |
 | `pipeline.py` | analyze → plan → render → encode, shared by CLI and interface |
 | `cli.py` / `tui.py` | command line and Textual interface |

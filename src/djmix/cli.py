@@ -94,6 +94,18 @@ def main(argv=None):
     p.add_argument("--titles", action="store_true", help="title card at each song")
     add_brand_options(p)
 
+    p = sub.add_parser("promo", help="cut short promo clips of songs from a rendered mix")
+    p.add_argument("folder")
+    p.add_argument("--render", help="which render (file name or history id; default: newest)")
+    p.add_argument("--songs", help="song numbers in the mix order, e.g. 1,4,7 (default: all)")
+    p.add_argument("--length", type=float, default=30, help="seconds (default 30)")
+    p.add_argument("--format", choices=["vertical", "square", "original"], default="vertical")
+    p.add_argument("--no-card", action="store_true", help="no title card on the clips")
+    add_brand_options(p)
+
+    p = sub.add_parser("history", help="list renders and promos made in a folder")
+    p.add_argument("folder")
+
     p = sub.add_parser("titles", help="re-encode an existing mix video with title cards / watermark")
     p.add_argument("mix", help="MIX_*.mp4 (its audio is kept as-is)")
     p.add_argument("--tracklist", help="default: <mix>_tracklist.txt")
@@ -133,6 +145,40 @@ def main(argv=None):
                      video=args.video, audio_only=args.audio_only)
     elif args.cmd == "titles":
         titles_cmd(args)
+    elif args.cmd == "promo":
+        promo_cmd(args)
+    elif args.cmd == "history":
+        history_cmd(args)
+
+
+def promo_cmd(args):
+    from . import history, pipeline, promo
+    pipeline.adopt_legacy(args.folder)
+    cuttable = [r for r in history.renders(args.folder) if r["exists"] and r.get("video") and r.get("timeline")]
+    if args.render:
+        cuttable = [r for r in cuttable if args.render in (r["id"], r["video"])]
+    if not cuttable:
+        sys.exit("No rendered mix video to cut from in this folder (render one first)")
+    r = cuttable[0]
+    songs = ([int(n) - 1 for n in args.songs.split(",")] if args.songs else list(range(len(r["timeline"]))))
+    print(f"Cutting {len(songs)} {args.format} clip(s) of {args.length:g}s from {r['video']}")
+    outs = promo.export(args.folder, r, songs, args.length, args.format, not args.no_card, brand_from(args))
+    print(f"Done: {len(outs)} clip(s) in {os.path.dirname(outs[0]) if outs else ''}")
+
+
+def history_cmd(args):
+    from . import history, pipeline
+    pipeline.adopt_legacy(args.folder)
+    for r in history.renders(args.folder):
+        out = r.get("video") or r.get("audio")
+        print(f"{r.get('created', ''):16}  {out:36}  {fmt_time(r.get('duration', 0)):>6}  "
+              f"seed {r.get('seed', '?'):<7} {r.get('preset', '')} {r.get('bars') or ''}  "
+              f"{len(r.get('promos', []))} promos{'' if r['exists'] else '  (file missing)'}")
+        for p in r.get("promos", []):
+            print(f"{'':18}└ {p['file']}")
+    last = history.load(args.folder)["last"]
+    if last:
+        print(f"\nLast settings here: {last}")
 
 
 def titles_cmd(args):

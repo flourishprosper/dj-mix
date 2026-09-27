@@ -4,7 +4,7 @@ from collections import deque
 
 import numpy as np
 
-from .plan import describe, walk
+from .plan import Timeline, describe, last_track_end, walk
 from .util import SR, run
 
 
@@ -45,7 +45,7 @@ def load_audio(folder, t, ratio, target_lufs, work):
 
 
 def render(folder, order, settings, out_wav, log=print, on_track=None):
-    """Render the mix. Returns (duration s, chapters [(time, track)], notes)."""
+    """Render the mix. Returns (duration s, chapters [(time, track)], notes, timeline)."""
     import soundfile as sf
 
     chapters, notes = [(0.0, order[0])], []
@@ -58,7 +58,7 @@ def render(folder, order, settings, out_wav, log=print, on_track=None):
 
     try:
         with sf.SoundFile(out_wav, "w", samplerate=SR, channels=2, subtype="FLOAT", format="RF64") as out:
-            written = 0
+            tl = Timeline(order)
             ra, pos, cur = 1.0, 0, None
             log(f"  [1/{len(order)}] {order[0]['file']}")
             for st in walk(order, settings, load):
@@ -67,10 +67,10 @@ def render(folder, order, settings, out_wav, log=print, on_track=None):
                 nxt = loaded.popleft()
                 tr, s, e, L = st["tr"], st["s"], st["e"], st["L"]
                 beat_len = int(L / (tr["bars"] * 4)) if tr["bars"] else SR // 2
-                out.write(cur[st["pos"]:s]); written += s - st["pos"]
+                ws = tl.transition(st)
+                out.write(cur[st["pos"]:s])
                 out.write(mix_segment(cur[s:s + L], nxt[e:e + L], tr["kind"] == "beatmatch", beat_len))
-                chapters.append(((written + L // 2) / SR, st["b"]))
-                written += L
+                chapters.append(((ws + L // 2) / SR, st["b"]))
                 note = f"{st['i']:2}. {st['a']['file']} -> {st['b']['file']}: {describe(tr, settings)}"
                 notes.append(note)
                 log(f"  [{st['i'] + 1}/{len(order)}] {note}")
@@ -81,15 +81,14 @@ def render(folder, order, settings, out_wav, log=print, on_track=None):
                 cur = loaded.popleft()
             # last track: stop before any breakdown, with a gentle fade
             last = order[-1]
-            end = len(cur)
+            end = last_track_end(order, settings, len(cur), pos, ra)
             if settings.cut_breakdowns and last["clean_end"] < last["duration"] - 1:
-                end = max(pos, min(end, int(last["clean_end"] * ra * SR)))
                 fade = min(6 * SR, end - pos)
                 tail = cur[end - fade:end] * np.cos(np.linspace(0, np.pi / 2, fade, dtype=np.float32))[:, None]
                 out.write(cur[pos:end - fade]); out.write(tail)
             else:
                 out.write(cur[pos:end])
-            written += end - pos
+            tl.finish(pos, end)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    return written / SR, chapters, notes
+    return tl.written / SR, chapters, notes, tl.seconds()
