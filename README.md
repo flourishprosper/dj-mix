@@ -1,122 +1,458 @@
-# dj-mix
+<div align="center">
 
-Beat-matched, EQ-crossfaded DJ mixes from a folder of tracks — plus a
-YouTube-ready video with looping visuals, title cards and a watermark.
+# 🎚️ dj-mix
 
-It mixes the way a DJ does, not a sequencer:
+### Drop a folder of tracks in. Get a beat-matched DJ set — and a YouTube-ready video — out.
 
-- **Local beatmatching.** At each transition the incoming track is time-stretched
-  (pitch preserved) to the outgoing track's tempo *at that moment*, and the two
-  are lined up downbeat to downbeat on phrase boundaries. Handles tracks whose
-  tempo drifts (e.g. AI-generated music).
-- **EQ transitions.** Highs crossfade across the whole overlap; the bass swaps on
-  the middle downbeat so two basslines never stack.
-- **Safe fallback.** If the tempo gap is too big or the beats won't stay together,
-  that transition becomes a plain equal-power crossfade instead of a trainwreck.
-- **Smart order.** Alternate takes of the same song (grouped by the embedded title
-  tag, so renaming files doesn't break it) are never back to back; neighbours are
-  chosen for close tempo and compatible key (Camelot wheel).
-- **Choppy-ending cut.** Detects where a track degrades into flickering "packets"
-  of sound (a common Suno artifact) and mixes out before it.
-- **Loudness.** Every track matched to -14 LUFS (YouTube's target), limited on output.
+**No DAW. No DJ controller. No timeline dragging.**<br>
+dj-mix listens to every track, finds the beat, plans the set, and mixes it the way a real DJ would:<br>
+tempo-locked, downbeat-aligned, bass-swapped transitions — then renders the video with title cards and your brand on it.
 
-## Install
+<br>
+
+<img src="docs/images/video-frame.jpg" alt="A frame from a dj-mix video: looping animation with a 'now playing' title card and watermark" width="820">
+
+<sub>A frame from a real dj-mix render: a looping clip, the current song's title card, and a watermark — all automatic.</sub>
+
+<br><br>
+
+![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple)
+![Interface](https://img.shields.io/badge/interface-terminal%20UI-8A2BE2)
+
+[Install](#-install) · [Your first mix](#-your-first-mix-step-by-step) · [Features](#-feature-tour) · [CLI](#-command-line) · [How it works](#-how-it-works) · [FAQ](#-troubleshooting)
+
+</div>
+
+---
+
+## Why this exists
+
+Lo-fi channels, study-music streams, workout sets, podcast beds, AI-music catalogs — they all need the same
+thing: **an hour of music that flows**, not a playlist with gaps and clashing drums between songs.
+
+Doing that by hand means beat-gridding every track in a DAW, nudging tempos, drawing EQ automation, and
+exporting a video. For a 40-minute set that's an evening of work. **dj-mix does it in about five minutes,**
+and it does the fiddly parts better than a quick crossfade ever could:
+
+| | A playlist / simple crossfade | **dj-mix** |
+|---|---|---|
+| Tempo | two beats fighting each other | incoming track **time-stretched to lock tempo** (pitch preserved) |
+| Timing | cuts wherever the song ends | transitions start **on a downbeat, on a phrase boundary** |
+| Low end | two basslines = mud | highs blend while the **bass swaps on the downbeat** |
+| Loudness | jumps between songs | every track matched to **-14 LUFS** (YouTube's target) |
+| Order | random | **harmonic** (Camelot wheel), tempo-aware, never two takes of the same song back to back |
+| Bad endings | plays the glitchy tail | detects **choppy AI-generated breakdowns** and mixes out before them |
+| Video | separate job | looped visual, **title card per song**, **watermark**, YouTube **chapter list** |
+
+And it's honest about its limits: when two tracks can't be matched cleanly, it tells you and falls back to a
+smooth crossfade instead of a trainwreck.
+
+---
+
+## ✨ Highlights
+
+- 🥁 **Real beatmatching** — its own beat tracker follows tempo drift, so even AI-generated tracks that don't hold a perfect tempo lock together.
+- 🎛️ **DJ-style EQ transitions** — equal-power highs, one-beat bass swap on the middle downbeat.
+- 🧠 **Set planning** — orders tracks by key compatibility and tempo, keeps alternate takes of a song apart (it reads the embedded title tag, so renaming files doesn't fool it).
+- ✂️ **Breakdown detection** — spots where a track degrades into flickering "packets" of sound and cuts it.
+- 🎬 **Video in the same pass** — loops your clip for the length of the mix, adds a "now playing" card for every song, your watermark or logo, and writes a tracklist you can paste straight into YouTube as chapters.
+- 🖥️ **A proper interface** — pick a folder, tweak options, *preview the whole set* before rendering, watch a live progress clock.
+- 🎚️ **Genre presets** — `lofi`, `hiphop`, `house`, `techno`, `dnb`, `pop`, `auto`.
+- 🔁 **Reproducible** — every mix has a seed; the same seed renders the identical set.
+
+---
+
+## 📦 Install
+
+dj-mix runs on **macOS** (tested on Apple Silicon). It should also work on Linux — see [Linux](#linux) — but that isn't tested yet.
+
+You need three things: **Homebrew** (the macOS package manager), **ffmpeg + rubberband** (audio/video tools), and **uv** (installs dj-mix and its Python dependencies for you — you don't need to install Python yourself).
+
+### 1. Install Homebrew (skip if you have it)
+
+Open **Terminal** and paste:
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Follow the prompts. When it finishes, it prints two lines starting with `echo` — run those so `brew` is on your PATH.
+
+### 2. Install the audio/video tools and uv
 
 ```sh
 brew install ffmpeg rubberband uv
-git clone <this repo> && cd dj-mix
-uv tool install -e .        # puts `dj-mix` on your PATH; -e = code edits apply immediately
 ```
 
-## Use
+| Tool | What dj-mix uses it for |
+|---|---|
+| **ffmpeg** | decoding tracks, measuring loudness, encoding the final video |
+| **rubberband** | studio-quality time-stretching (changes tempo without changing pitch) |
+| **uv** | installs dj-mix in its own isolated environment, including Python 3.13 if you don't have it |
+
+Check they work:
 
 ```sh
-dj-mix                       # open the interface
-dj-mix ui ~/Music/my-set     # ...starting in a folder
+ffmpeg -version | head -1
+rubberband --version
 ```
 
-The interface: pick a folder on the left, set options in the middle, then
-**Analyze** (`a`) → **Plan** (`p`) to preview the order and every transition →
-**Render** (`r`). Render always reproduces the plan you previewed (same seed).
-Your options and brand settings are remembered.
-
-Or from the command line:
+### 3. Install dj-mix
 
 ```sh
-dj-mix analyze FOLDER                     # tempo / key / stability / breakdowns per track
-dj-mix plan FOLDER                        # order + every transition, no rendering
-dj-mix mix FOLDER --titles                # render mix + video with title cards
-dj-mix mix FOLDER --seed 287710           # reproduce a previous order exactly
-dj-mix titles MIX_....mp4                 # add title cards / watermark to an existing mix video
+uv tool install --python 3.13 git+https://github.com/flourishprosper/dj-mix
 ```
 
-The folder should contain the tracks (mp3, wav, flac, m4a, aif) and, for video,
-one looping clip (mp4/mov). Output lands in the same folder as
-`MIX_<date>.mp4` plus `MIX_<date>_tracklist.txt` — paste the tracklist into a
-YouTube description for chapters.
+That's it — `dj-mix` is now a command. Python packages (librosa, numpy, scipy, soundfile, Pillow, Textual)
+are installed automatically into dj-mix's own environment and won't touch anything else on your system.
 
-### Mixing options
+> **Want to hack on it?** Clone instead and install in editable mode, so your code changes apply immediately:
+> ```sh
+> git clone https://github.com/flourishprosper/dj-mix && cd dj-mix
+> uv tool install --python 3.13 -e .
+> ```
+
+To update later: `uv tool upgrade dj-mix` (or `git pull` for an editable install).
+
+---
+
+## 🚀 Your first mix, step by step
+
+### Step 1 — Make a folder
+
+Put the tracks you want in the set into one folder, plus **one looping video clip** for the visuals:
+
+```
+~/Music/Late Night Cruise/
+├── Room Echo Romance.mp3
+├── Twang in the Shade.mp3
+├── 86 BPM Boulevard.mp3
+├── …                              ← as many tracks as you like (mp3, wav, flac, m4a, aif)
+└── impala-loop-30s.mp4           ← any seamless loop (mp4 or mov); it repeats for the whole mix
+```
+
+No video? That's fine — you can render **audio only**.
+
+> 💡 Tip: a 10–30 second clip that loops seamlessly looks best. The clip is repeated to cover the whole mix.
+
+### Step 2 — Open dj-mix
+
+```sh
+dj-mix
+```
+
+The interface opens in your terminal. Three areas:
+
+- **Top left — Music folders.** Browse with the arrow keys, press **Enter** on a folder to open it.
+- **Left — Options.** Everything you can set, grouped into *Mixing*, *Output* and *Brand*.
+- **Right — Results.** Tabs for **Tracks**, **Plan** and **Log**, with a progress bar and status line underneath.
+
+Keys: **`a`** Analyze · **`p`** Plan · **`r`** Render · **`q`** Quit. You can also click everything.
+
+### Step 3 — Pick your folder → automatic analysis
+
+Select your folder in the **Music folders** box and press **Enter**. dj-mix analyzes every track (a few seconds
+per track, cached after the first time) and fills the **Tracks** tab:
+
+![Tracks tab: tempo, drift, key, loudness, length and breakdowns for every track](docs/images/tracks.svg)
+
+| Column | What it tells you |
+|---|---|
+| **BPM** | detected tempo |
+| **Drift** | how much the tempo wanders (under ~1 = steady, beatmatches well) |
+| **Key** | musical key + [Camelot](https://mixedinkey.com/camelot-wheel/) code used for harmonic ordering |
+| **LUFS** | loudness before matching (every track is brought to the same level) |
+| **Breakdown** | where a track turns choppy — the mix will end that track before this point |
+
+### Step 4 — Choose your options
+
+The defaults are good for lo-fi/chillhop. The ones you'll most often touch:
+
+| Option | What it does |
+|---|---|
+| **Preset** | genre settings — sets the tempo range, transition length and whether to cut choppy endings |
+| **Transition (bars)** | how long each blend lasts (8 bars ≈ 22 s at 86 BPM). Longer = smoother, shorter = safer for vocals |
+| **Tempo lean (BPM)** | leave blank. Set it only if a genre gets detected at half or double speed |
+| **Loudness (LUFS)** | -14 is YouTube's target; leave it |
+| **Seed** | blank = a fresh random order each time you plan |
+| **Cut choppy endings** | on for AI-generated music; off for normal releases |
+| **Video** | which loop clip to use — or *Audio only* |
+| **Title cards** | a "now playing" card at every song |
+
+### Step 5 — Plan (preview the whole set)
+
+Press **`p`**. dj-mix orders the tracks and plans every transition *without rendering anything*:
+
+![Plan tab: the running order, when each song comes in, and how each transition will be mixed](docs/images/plan.svg)
+
+- **In at** — where each song lands in the final mix (these become your YouTube chapters).
+- **Transition in** — `beatmatch 8 bars, +2.9%` means the incoming track is sped up 2.9% and locked to the beat for 8 bars; `crossfade` means the two tracks were too far apart in tempo, or too loose, to lock — it will blend them smoothly instead.
+
+Don't like the order? Press **`p`** again for a new one. The status line shows the estimated length and how
+many transitions are beatmatched. **The seed is filled in automatically**, so Render produces exactly the plan you're looking at.
+
+### Step 6 — Brand it (optional)
+
+Scroll the options to **Brand**:
+
+![Brand options: credit lines, colors with live swatches, font, and watermark settings](docs/images/brand.svg)
+
+- **Credit lines** appear under every song title on the title cards (e.g. *Composed by …* / *Your Label*).
+- **Accent / Text color** — hex (`#F2A65A`) or names (`royalblue`). The swatch beside each field previews the color live; an invalid color shows a red **?**.
+- **Watermark** — *Text* or *Logo image* (a PNG with transparency works best), with position, size, opacity and margin.
+
+These settings are remembered for next time (stored in `~/.config/dj-mix/config.json`).
+
+### Step 7 — Render
+
+Press **`r`**. The **Log** tab shows each transition as it's mixed, and the status line runs a live clock with
+percent done and time remaining:
+
+![Rendering: live log of every transition, progress bar, elapsed time and time remaining](docs/images/render.svg)
+
+A 40-minute mix with video takes about **5 minutes** on an Apple Silicon Mac. When it's done:
+
+![Render finished: output file, mix length and how long the render took](docs/images/done.svg)
+
+### Step 8 — Upload
+
+Your folder now contains:
+
+| File | |
+|---|---|
+| `MIX_<date>.mp4` | the finished video: same resolution as your clip, H.264 + AAC 320k, peaks limited to -1 dB |
+| `MIX_<date>_tracklist.txt` | timestamps for every song, plus the seed and how long the render took |
+
+Paste the tracklist into your YouTube description and YouTube turns it into **chapters** automatically:
+
+```
+0:00 Room Echo Romance
+2:13 Twang in the Shade
+4:11 86 BPM Boulevard
+6:01 Vinyl Sock Hop
+…
+```
+
+🎉 That's your first mix.
+
+---
+
+## 🧭 Feature tour
+
+### Presets
+
+| Preset | For | Tempo lean | Transition | Cut choppy endings |
+|---|---|---|---|---|
+| `lofi` | lo-fi, chillhop, **Suno/AI music** | 88 BPM | 8 bars | ✅ |
+| `hiphop` | hip-hop, boom bap, R&B | 92 | 8 | |
+| `house` | house, disco, deep house | 124 | 16 | |
+| `techno` | techno, tech house | 130 | 16 | |
+| `dnb` | drum & bass, jungle | 174 | 16 | |
+| `pop` | vocal-heavy tracks | 110 | 4 | |
+| `auto` | not sure — wide tempo search | 110 (loose) | 8 | |
+
+"Tempo lean" is what the detector prefers when a beat could be read at half or double speed — it's why a
+174 BPM drum & bass track isn't mistaken for 87.
+
+### Same song, different takes
+
+If your folder has several versions of a song (Suno gives you two per prompt: `Song.mp3`, `Song (1).mp3`),
+dj-mix groups them by the **title stored inside the file** — so it still knows they're the same song after you
+rename them — and never plays two takes back to back.
+
+### Reproducible sets
+
+Every plan has a seed. Re-render the exact same set any time:
+
+```sh
+dj-mix mix ~/Music/"Late Night Cruise" --seed 287710 --titles
+```
+
+### Add titles or a watermark to a mix you already rendered
+
+```sh
+dj-mix titles ~/Music/"Late Night Cruise"/MIX_20260925_2300.mp4
+```
+
+Re-renders the picture with title cards (and your saved watermark); the audio is copied untouched.
+
+---
+
+## ⌨️ Command line
+
+Everything in the interface is also a command, handy for scripts and batch jobs.
+
+```sh
+dj-mix                          # open the interface
+dj-mix ui FOLDER                # open the interface in a folder
+dj-mix analyze FOLDER           # per-track report
+dj-mix plan FOLDER              # order + every transition, no rendering
+dj-mix mix FOLDER [options]     # render the mix (and video)
+dj-mix titles MIX.mp4           # add title cards / watermark to an existing mix video
+```
+
+**Mixing options** (`analyze`, `plan`, `mix`)
+
+| Flag | Default | |
+|---|---|---|
+| `--preset NAME` | `lofi` | `lofi` `hiphop` `house` `techno` `dnb` `pop` `auto` |
+| `--bars N` | preset | transition length in bars |
+| `--bpm N` | preset | tempo the detector leans toward |
+| `--seed N` | random | repeat a previous order |
+| `--lufs N` | -14 | target loudness |
+| `--keep-endings` / `--cut-endings` | preset | choppy-breakdown cut off / on |
+
+**Output options** (`mix`)
 
 | Flag | |
 |---|---|
-| `--preset` | `lofi` (default), `hiphop`, `house`, `techno`, `dnb`, `pop`, `auto` |
-| `--bars N` | transition length in bars (default: preset) |
-| `--bpm N` | tempo the detector leans toward, to settle half/double-time (default: preset) |
-| `--seed N` | repeat a previous order |
-| `--lufs N` | target loudness (default -14) |
-| `--keep-endings` / `--cut-endings` | choppy-breakdown cut on/off (on for `lofi`) |
 | `--video PATH` | loop clip (default: first video in the folder) |
 | `--audio-only` | WAV only, no video |
+| `--titles` | title card at each song |
 
-### Brand / watermark options
+**Brand / watermark options** (`mix`, `titles`)
 
-Save defaults once with `--save-brand` (stored in `~/.config/dj-mix/config.json`);
-the interface edits the same settings.
+| Flag | Default | |
+|---|---|---|
+| `--credit "LINE"` | saved | credit line under each title — repeat for more lines |
+| `--no-credits` | | title cards with just the song name |
+| `--accent COLOR` | `#F2A65A` | accent bar color |
+| `--text-color COLOR` | `#F6ECDC` | title and watermark text color |
+| `--font FILE` | Avenir Next | `.ttf`/`.otf` for titles and text watermark |
+| `--watermark IMAGE` | | logo watermark (PNG with transparency) |
+| `--watermark-text TEXT` | | text watermark |
+| `--watermark-pos POS` | `top-right` | `top-left` `top-right` `bottom-left` `bottom-right` `center` |
+| `--watermark-size F` | 0.12 | width as a fraction of the frame |
+| `--watermark-opacity F` | 0.6 | 0–1 |
+| `--watermark-margin F` | 0.03 | gap from the edge, fraction of frame width |
+| `--no-watermark` | | skip the saved watermark this time |
+| `--save-brand` | | save these brand options as your defaults |
 
-| Flag | |
-|---|---|
-| `--titles` | title card at each song: fades in, holds 15 s, fades out |
-| `--credit "LINE"` | credit line under each title (repeat for more lines); `--no-credits` |
-| `--accent COLOR` / `--text-color COLOR` | title-card colors, e.g. `'#F2A65A'` |
-| `--font FILE` | .ttf/.otf for titles and text watermark (default Avenir Next) |
-| `--watermark IMAGE` | logo watermark (PNG with transparency) |
-| `--watermark-text TEXT` | text watermark |
-| `--watermark-pos` | `top-left`, `top-right` (default), `bottom-left`, `bottom-right`, `center` |
-| `--watermark-size F` | width as a fraction of the frame (default 0.12) |
-| `--watermark-opacity F` | 0–1 (default 0.6) |
-| `--watermark-margin F` | distance from the edge, fraction of frame width (default 0.03) |
-| `--no-watermark` | ignore the saved watermark for this run |
-
-## What it's good at
-
-Steady-tempo 4/4 music: lo-fi, hip-hop, R&B, house, techno, disco, pop, DnB.
-Live-played music (rock, jazz, oldies) mostly gets clean crossfades rather than
-beatmatches, because human tempo drifts. Not yet supported: non-4/4 meters,
-vocal-aware transition placement.
-
-## Developing
+Example — a house set with a logo, saved as your default look:
 
 ```sh
-uv sync
-uv run pytest            # synthetic-beat tests: tempo per genre preset, downbeats, breakdowns, ordering
-uv run dj-mix ...        # run from the checkout
+dj-mix mix ~/Music/friday-house --preset house --titles \
+  --watermark ~/brand/logo.png --watermark-pos bottom-right --watermark-opacity 0.8 \
+  --credit "Mixed by DJ You" --save-brand
 ```
 
-Code map (`src/djmix/`):
+---
+
+## 🔬 How it works
+
+![Anatomy of one transition: highs cross over equal-power; the bass swaps on the middle downbeat](docs/images/transition.svg)
+
+1. **Analyze.** For each track: an onset envelope → a global tempo estimate (autocorrelation, weighted by the
+   preset's tempo lean) → a dynamic-programming beat tracker that *follows* tempo drift → kick-drum energy on
+   each beat (to find downbeats) → musical key (Krumhansl–Schmuckler) → integrated loudness (EBU R128) →
+   breakdown detection (counts sound→silence flickers per 5-second window). Results are cached per folder.
+2. **Plan.** A randomized search over orderings that scores key distance and tempo gaps, with a hard rule that
+   takes of the same song never touch.
+3. **Transition.** For each pair: pick the outgoing track's latest phrase-aligned downbeat before its music ends,
+   and the incoming track's first downbeat. Fit a straight beat grid to each side over the overlap. If the
+   tempo gap is within the preset's limit and both grids are tight (beats within 30 ms), stretch the incoming
+   track to match and do the EQ transition; if not, try half the length; if still not, crossfade.
+4. **Render.** Decode → rubberband time-stretch → loudness match → write one continuous 48 kHz float WAV.
+5. **Encode.** Loop the clip, overlay the watermark and title cards (drawn with Pillow, faded by ffmpeg),
+   limit peaks to -1 dB, encode H.264 + AAC, stop exactly at the end of the audio.
+
+---
+
+## 🛠️ Troubleshooting
+
+<details>
+<summary><b><code>dyld: Library not loaded: …libx265….dylib</code> when running ffmpeg</b></summary>
+
+Homebrew updated a library ffmpeg depends on without rebuilding ffmpeg. Fix:
+```sh
+brew reinstall ffmpeg
+```
+</details>
+
+<details>
+<summary><b><code>Missing: rubberband</code> (or ffmpeg / ffprobe)</b></summary>
+
+```sh
+brew install ffmpeg rubberband
+```
+</details>
+
+<details>
+<summary><b>Everything is "crossfade", nothing beatmatches</b></summary>
+
+- Check the **BPM** column in the Tracks tab. If tracks sit far apart (e.g. 75 vs 90), they can't be matched
+  without audible stretching — that's intended.
+- If a genre is being read at half/double speed (house showing ~62 BPM), pick the right **preset** or set
+  **Tempo lean**.
+- Live-played music (rock, jazz, oldies) drifts too much to lock; it gets clean crossfades instead.
+</details>
+
+<details>
+<summary><b>A track's ending got cut off</b></summary>
+
+That's the choppy-ending detector. Check the **Breakdown** column; if it's wrong for your music, turn off
+**Cut choppy endings** (or `--keep-endings`).
+</details>
+
+<details>
+<summary><b>Title text looks different on Linux</b></summary>
+
+The default font is Avenir Next (built into macOS). Elsewhere, pass `--font /path/to/font.ttf` or set **Font file**.
+</details>
+
+### Linux
+
+Untested, but should work: `sudo apt install ffmpeg rubberband-cli`, install [uv](https://docs.astral.sh/uv/),
+then the same `uv tool install` command. Reports welcome!
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Vocal detection — keep two vocals from overlapping in a transition
+- [ ] 3/4 and 6/8 time signatures
+- [ ] Waveform preview of each transition in the interface
+- [ ] Energy-curve ordering (build up / wind down)
+- [ ] Tested Linux support + CI
+
+Ideas and PRs welcome.
+
+---
+
+## 🤝 Contributing
+
+```sh
+git clone https://github.com/flourishprosper/dj-mix && cd dj-mix
+uv sync
+uv run pytest          # synthetic-beat tests: tempo per preset, downbeats, breakdowns, ordering
+uv run dj-mix          # run from the checkout
+```
 
 | Module | |
 |---|---|
-| `analyze.py` | tempo, DP beat tracker, kick energy, key, loudness, breakdown detection; per-folder cache |
-| `plan.py` | track ordering, downbeat/phrase picking, transition planning, dry run |
-| `render.py` | decode, stretch (rubberband), gain, EQ transitions, WAV output |
-| `video.py` | loop clip + audio + title cards + watermark in one ffmpeg pass |
-| `brand.py` | title-card and watermark drawing (Pillow) |
-| `presets.py` | genre presets and render settings — **start here to add a genre** |
+| `analyze.py` | tempo, beat tracker, downbeat energy, key, loudness, breakdown detection, cache |
+| `plan.py` | ordering, downbeat/phrase picking, transition planning, dry run |
+| `render.py` | decode, stretch, gain, EQ transitions |
+| `video.py` / `brand.py` | video encode; title cards and watermark |
+| `presets.py` | **genre presets — start here to add a genre** |
 | `pipeline.py` | analyze → plan → render → encode, shared by CLI and interface |
-| `cli.py`, `tui.py` | command line and Textual interface |
+| `cli.py` / `tui.py` | command line and Textual interface |
 
-To add a genre: add a `Preset` in `presets.py` and a case to
-`tests/test_analysis.py::test_tempo_per_genre`.
+**Adding a genre:** add a `Preset` in `presets.py` and a tempo case in `tests/test_analysis.py`
+(the tests build a synthetic drum loop at that tempo and check the preset finds it).
 
-Note: librosa's `beat_track` segfaults (numba) on some macOS setups, so beats come
-from our own dynamic-programming tracker in `analyze.py`.
+**Updating screenshots:** `uv run python docs/make_screenshots.py "<folder with tracks and a loop clip>"` drives
+the real interface and regenerates everything in `docs/images/`.
+
+> Note: librosa's `beat_track` segfaults (numba) on some macOS setups, so dj-mix uses its own
+> dynamic-programming beat tracker.
+
+---
+
+<div align="center">
+
+Built by **[Flourish$Prosper Music Group](https://github.com/flourishprosper)**.<br>
+If dj-mix saved you an evening of DAW work, a ⭐ helps other people find it.
+
+</div>

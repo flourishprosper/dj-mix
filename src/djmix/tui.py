@@ -396,7 +396,7 @@ class DJMix(App):
         self.call_from_thread(bar.update, progress=100)
         self.call_from_thread(self.done, f"Done: {os.path.basename(out)} ({fmt_time(res['duration'])} mix) "
                                          f"— rendered in [b]{fmt_time(res['elapsed'])}[/b]")
-        self.call_from_thread(self.notify, f"Saved {out}", timeout=10)
+        self.call_from_thread(self.notify, f"Saved {os.path.basename(out)} in {os.path.basename(folder)}", timeout=10)
 
     def failed(self, e):
         self.log_line(f"[red]Error: {e}")

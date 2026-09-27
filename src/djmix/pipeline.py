@@ -50,7 +50,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
 
     if audio_only:
         result["audio"] = wav
-        log(f"Audio: {wav}")
+        log(f"Audio: {os.path.basename(wav)} (in the track folder)")
         return finish(result, t0, log)
 
     if video is None:
@@ -66,7 +66,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
                     progress=(lambda f: progress(0.5 + 0.5 * f)) if progress else None)
     os.remove(wav)
     result["video"] = out
-    log(f"Done: {out}")
+    log(f"Done: {os.path.basename(out)} (in the track folder)")
     return finish(result, t0, log)
 
 

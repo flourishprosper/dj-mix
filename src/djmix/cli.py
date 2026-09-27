@@ -102,6 +102,9 @@ def main(argv=None):
     add_brand_options(p)
 
     args = ap.parse_args(argv)
+    for name in ("folder", "mix", "video", "tracklist", "out"):
+        if getattr(args, name, None):
+            setattr(args, name, os.path.expanduser(getattr(args, name)))
     if args.cmd in (None, "ui"):
         from .tui import run
         run(getattr(args, "folder", None))
