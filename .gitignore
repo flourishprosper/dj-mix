@@ -1,0 +1,20 @@
+# environments / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+*.egg-info/
+
+# never commit music or renders
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.aif
+*.aiff
+*.mp4
+*.mov
+_dj-analysis.json
+MIX_*
+.DS_Store
