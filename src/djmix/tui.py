@@ -86,6 +86,7 @@ class DJMix(App):
         self.brand = config.brand_defaults()
         self.start_folder = folder or self.ui.get("folder", "")
         self.busy = False
+        self.logs = {}                       # folder -> this session's log lines
 
     # ------------------------------------------------------------ layout
     def compose(self) -> ComposeResult:
@@ -199,8 +200,35 @@ class DJMix(App):
     def status(self, msg):
         self.query_one("#status", Static).update(msg)
 
-    def log_line(self, msg):
-        self.query_one("#log", RichLog).write(msg)
+    def log_line(self, msg, folder=None):
+        """Log output belongs to a folder; the Log tab only shows the open folder's."""
+        folder = folder or getattr(self, "current_folder", "")
+        self.logs.setdefault(folder, []).append(msg)
+        if folder == getattr(self, "current_folder", ""):
+            self.query_one("#log", RichLog).write(msg)
+
+    def show_folder_log(self, folder):
+        """Log tab = this folder's saved diary (dimmed) + this session's output here."""
+        from rich.text import Text
+        log = self.query_one("#log", RichLog)
+        log.clear()
+        log.write(Text(f"Log — {os.path.basename(folder)}", style="bold"))
+        try:
+            with open(os.path.join(folder, history.DIRNAME, "log.txt")) as f:
+                diary = f.read().splitlines()[-300:]
+        except OSError:
+            diary = []
+        if diary:
+            log.write(Text("── earlier in this folder ──", style="dim"))
+            for line in diary:
+                log.write(Text(line, style="dim"))
+        session = self.logs.get(folder, [])
+        if session:
+            log.write(Text("── this session ──", style="dim"))
+            for line in session:
+                log.write(line)
+        if not diary and not session:
+            log.write(Text("No saved history in this folder yet.", style="dim"))
 
     def val(self, wid):
         return self.query_one(f"#{wid}").value
@@ -243,7 +271,11 @@ class DJMix(App):
 
     def load_folder(self, path):
         """Open a folder and pick up where we left off there."""
+        if self.busy:
+            self.notify("Wait for the current job to finish before switching folders", severity="warning")
+            return
         self.current_folder = path
+        self.show_folder_log(path)
         self.query_one("#folder", Input).value = path
         vids = list_videos(path)
         sel = self.query_one("#video", Select)
@@ -381,7 +413,7 @@ class DJMix(App):
     @work(thread=True, group="job")
     def run_analyze(self, folder, settings):
         from . import pipeline
-        log = lambda m: self.call_from_thread(self.log_line, m)
+        log = lambda m: self.call_from_thread(self.log_line, m, folder)
         try:
             tracks = pipeline.analyze(folder, settings, log=log)
             pipeline.adopt_legacy(folder, log=log)
@@ -416,7 +448,7 @@ class DJMix(App):
     def run_plan(self, folder, settings, titles):
         from . import pipeline
         try:
-            res = pipeline.plan(folder, settings, log=lambda m: self.call_from_thread(self.log_line, m))
+            res = pipeline.plan(folder, settings, log=lambda m: self.call_from_thread(self.log_line, m, folder))
             history.remember_settings(folder, **pipeline.settings_record(settings, res[0]),
                                       titles=titles)
             history.log(folder, f"plan  seed {res[0]}, preset {settings.preset.name}, {settings.bars} bars, "
@@ -472,7 +504,7 @@ class DJMix(App):
         try:
             res = pipeline.mix(folder, settings, brand=brand, titles=titles, video=video,
                                audio_only=audio_only or video is None,
-                               log=lambda m: self.call_from_thread(self.log_line, m),
+                               log=lambda m: self.call_from_thread(self.log_line, m, folder),
                                progress=lambda f: self.call_from_thread(self.set_frac, f))
         except Exception as e:
             self.call_from_thread(self.failed, e)
@@ -626,7 +658,7 @@ class DJMix(App):
         from . import promo
         try:
             outs = promo.export(folder, r, songs, length, fmt, card, brand,
-                                log=lambda m: self.call_from_thread(self.log_line, m),
+                                log=lambda m: self.call_from_thread(self.log_line, m, folder),
                                 progress=lambda f: self.call_from_thread(self.set_frac, f))
         except Exception as e:
             self.call_from_thread(self.failed, e)
