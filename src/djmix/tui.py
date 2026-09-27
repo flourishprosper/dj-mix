@@ -22,6 +22,23 @@ class FolderTree(DirectoryTree):
         return [p for p in paths if p.is_dir() and not p.name.startswith((".", "__"))]
 
 
+COLOR_FIELDS = ("accent", "text_color")
+
+
+def parse_color(value):
+    """Same parser the renderer uses, so the swatch matches the video. None if invalid."""
+    from PIL import ImageColor
+    try:
+        return ImageColor.getrgb(value.strip())[:3]
+    except ValueError:
+        return None
+
+
+def color_row(label, widget):
+    return Horizontal(Label(label, classes="lbl"), widget,
+                      Static("", id=f"{widget.id}_swatch", classes="swatch"), classes="row")
+
+
 def row(label, widget):
     return Horizontal(Label(label, classes="lbl"), widget, classes="row")
 
@@ -37,6 +54,8 @@ class DJMix(App):
     .row .lbl { width: 20; padding: 1 1 0 0; color: $text-muted; }
     .row Input, .row Select { width: 1fr; }
     .row Switch { margin: 0 0 0 0; }
+    .swatch { width: 6; height: 3; margin: 0 0 0 1; border: tall $panel; content-align: center middle; }
+    .swatch.bad { border: tall $error; color: $error; }
     #buttons { height: auto; margin: 1 0; }
     #buttons Button { width: 1fr; margin: 0 1 0 0; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
@@ -90,8 +109,8 @@ class DJMix(App):
                 credits = b.credits + ["", ""]
                 yield row("Credit line 1", Input(credits[0], id="credit1"))
                 yield row("Credit line 2", Input(credits[1], id="credit2"))
-                yield row("Accent color", Input(b.accent, id="accent"))
-                yield row("Text color", Input(b.text_color, id="text_color"))
+                yield color_row("Accent color", Input(b.accent, id="accent"))
+                yield color_row("Text color", Input(b.text_color, id="text_color"))
                 yield row("Font file", Input(b.font or "", id="font", placeholder="default: Avenir Next"))
                 kind = "image" if b.watermark_image else "text" if b.watermark_text else "none"
                 yield row("Watermark", Select([("None", "none"), ("Text", "text"), ("Logo image", "image")],
@@ -127,6 +146,8 @@ class DJMix(App):
         self.query_one("#plan_table", DataTable).add_columns(
             "#", "Track", "BPM", "Key", "In at", "Transition in")
         self.ready = False
+        for wid in COLOR_FIELDS:
+            self.update_swatch(wid)
         self.call_after_refresh(self._after_mount)
         if missing_tools():
             self.status(f"[red]Missing: {', '.join(missing_tools())} — brew install ffmpeg rubberband")
@@ -193,6 +214,19 @@ class DJMix(App):
         self.action_analyze()
 
     # ------------------------------------------------------------ events
+    def update_swatch(self, wid):
+        from textual.color import Color
+        sw = self.query_one(f"#{wid}_swatch", Static)
+        rgb = parse_color(self.val(wid))
+        sw.set_class(rgb is None, "bad")
+        sw.styles.background = Color(*rgb) if rgb else None
+        sw.update("" if rgb else "?")
+
+    @on(Input.Changed)
+    def color_typed(self, event):
+        if event.input.id in COLOR_FIELDS:
+            self.update_swatch(event.input.id)
+
     @on(DirectoryTree.DirectorySelected, "#tree")
     def picked(self, event):
         self.load_folder(str(event.path))
@@ -221,6 +255,10 @@ class DJMix(App):
     def start(self, what):
         if self.busy:
             self.notify("Still working on the last job", severity="warning")
+            return False
+        bad = [w.replace("_", " ") for w in COLOR_FIELDS if parse_color(self.val(w)) is None]
+        if bad:
+            self.notify(f"Not a color: {', '.join(bad)} (try #F2A65A or 'orange')", severity="error")
             return False
         try:
             self.settings(), self.brand_now()
