@@ -61,6 +61,7 @@ smooth crossfade instead of a trainwreck.
 - 📱 **Promo clips in one click** — cut 30-second vertical, square or widescreen clips of any songs straight from the finished mix, each from where that song plays alone, starting on a downbeat.
 - 🗂️ **Every folder remembers** — reopen a folder and you're back where you left off: last settings, last plan, every past render, and every promo you've cut.
 - 🖥️ **A proper interface** — pick a folder, tweak options, *preview the whole set* before rendering, watch a live progress clock.
+- 🎧 **Built-in mini player** — double-click any song, finished mix or promo clip to hear it without leaving the terminal.
 - 🎚️ **Genre presets** — `lofi`, `hiphop`, `house`, `techno`, `dnb`, `pop`, `auto`.
 - 🔁 **Reproducible** — every mix has a seed; the same seed renders the identical set.
 
@@ -108,7 +109,8 @@ uv tool install --python 3.13 git+https://github.com/flourishprosper/dj-mix
 ```
 
 That's it — `dj-mix` is now a command. Python packages (librosa, numpy, scipy, soundfile, Pillow, Textual)
-are installed automatically into dj-mix's own environment and won't touch anything else on your system.
+and sounddevice (for the mini player) are installed automatically into dj-mix's own environment and won't
+touch anything else on your system.
 
 > **Want to hack on it?** Clone instead and install in editable mode, so your code changes apply immediately:
 > ```sh
@@ -151,7 +153,12 @@ The interface opens in your terminal. Three areas:
 - **Left — Options.** Everything you can set, grouped into *Mixing*, *Output* and *Brand*.
 - **Right — Results.** Tabs for **Tracks**, **Plan** and **Log**, with a progress bar and status line underneath.
 
-Keys: **`a`** Analyze · **`p`** Plan · **`r`** Render · **`q`** Quit. You can also click everything.
+Keys: **`a`** Analyze · **`p`** Plan · **`r`** Render · **`e`** Export promos · **`q`** Quit. You can also click everything.
+
+> 🎧 **Listen as you go.** Double-click any row to hear it in the mini player at the bottom:
+> a song in **Tracks** or **Plan** plays the original track, a render in **History** plays the finished mix,
+> and a song in **Promo** plays exactly the clip that would be exported. **Space** play/pause ·
+> **`[`** / **`]`** back/forward 10 s · **`-`** / **`=`** volume.
 
 ### Step 3 — Pick your folder → automatic analysis
 
@@ -468,7 +475,8 @@ The default font is Avenir Next (built into macOS). Elsewhere, pass `--font /pat
 
 ### Linux
 
-Untested, but should work: `sudo apt install ffmpeg rubberband-cli`, install [uv](https://docs.astral.sh/uv/),
+Untested, but should work: `sudo apt install ffmpeg rubberband-cli libportaudio2` (PortAudio is for the
+mini player), install [uv](https://docs.astral.sh/uv/),
 then the same `uv tool install` command. Reports welcome!
 
 ---
@@ -502,6 +510,7 @@ uv run dj-mix          # run from the checkout
 | `video.py` / `brand.py` | video encode; title cards and watermark |
 | `promo.py` | song timelines in a mix, clip placement, promo export |
 | `history.py` | per-folder history, log and resume |
+| `player.py` | the mini player (ffmpeg decode → sounddevice output) |
 | `presets.py` | **genre presets — start here to add a genre** |
 | `pipeline.py` | analyze → plan → render → encode, shared by CLI and interface |
 | `cli.py` / `tui.py` | command line and Textual interface |

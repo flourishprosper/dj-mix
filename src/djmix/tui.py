@@ -6,6 +6,7 @@ from pathlib import Path
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import (Button, DataTable, DirectoryTree, Footer, Header, Input, Label,
                              ProgressBar, RichLog, Select, Static, Switch, TabbedContent, TabPane)
 
@@ -18,6 +19,9 @@ AUDIO_ONLY = "__audio_only__"
 
 
 class FolderTree(DirectoryTree):
+    # Space is play/pause everywhere; the tree would otherwise use it to fold a folder
+    BINDINGS = [("space", "app.play_pause", "Play/Pause")]
+
     def filter_paths(self, paths):
         return [p for p in paths if p.is_dir() and not p.name.startswith((".", "_", "MIX_"))]
 
@@ -37,6 +41,25 @@ def parse_color(value):
 def color_row(label, widget):
     return Horizontal(Label(label, classes="lbl"), widget,
                       Static("", id=f"{widget.id}_swatch", classes="swatch"), classes="row")
+
+
+class PlayTable(DataTable):
+    """DataTable where double-click plays the row (see DJMix.play_row)."""
+
+    class Play(Message):
+        def __init__(self, table, row_key):
+            super().__init__()
+            self.table, self.row_key = table, row_key
+
+    click_at = 0.0     # time of the last mouse click on this table
+    double_at = -1.0   # time of the last double-click
+
+    def on_click(self, event):
+        self.click_at = time.monotonic()
+        if event.chain >= 2 and self.row_count:
+            self.double_at = self.click_at
+            key = self.coordinate_to_cell_key(self.cursor_coordinate).row_key
+            self.post_message(self.Play(self, key))
 
 
 def row(label, widget):
@@ -70,9 +93,15 @@ class DJMix(App):
     #promo_bar Label { padding: 1 1 0 1; color: $text-muted; }
     #promo_bar Button { margin: 0 0 0 1; min-width: 10; }
     #promo_hint, #history_hint { color: $text-muted; padding: 0 0 1 0; }
+    #player { height: 3; border-top: solid $panel; padding: 0 1; }
+    #player .pl { min-width: 5; width: 5; margin: 0 1 0 0; }
+    #pl_now { width: 1fr; padding: 1 1 0 1; }
+    #pl_vol { width: 5; padding: 1 0 0 0; content-align: center top; }
     """
     BINDINGS = [("a", "analyze", "Analyze"), ("p", "plan", "Plan"),
-                ("r", "render", "Render"), ("e", "export", "Export promos"), ("q", "quit", "Quit")]
+                ("r", "render", "Render"), ("e", "export", "Export promos"), ("q", "quit", "Quit"),
+                ("space", "play_pause", "Play/Pause"), ("[", "seek(-10)", "−10s"), ("]", "seek(10)", "+10s"),
+                ("minus", "volume(-0.1)", "Vol −"), ("equals_sign", "volume(0.1)", "Vol +")]
 
     def __init__(self, folder=None):
         # Analysis uses a process pool. Its helper process is handed the real
@@ -87,6 +116,8 @@ class DJMix(App):
         self.start_folder = folder or self.ui.get("folder", "")
         self.busy = False
         self.logs = {}                       # folder -> this session's log lines
+        from .player import Player
+        self.player = Player()
 
     # ------------------------------------------------------------ layout
     def compose(self) -> ComposeResult:
@@ -145,9 +176,9 @@ class DJMix(App):
             with Vertical():
                 with TabbedContent(id="tabs"):
                     with TabPane("Tracks", id="tab-tracks"):
-                        yield DataTable(id="tracks", zebra_stripes=True, cursor_type="row")
+                        yield PlayTable(id="tracks", zebra_stripes=True, cursor_type="row")
                     with TabPane("Plan", id="tab-plan"):
-                        yield DataTable(id="plan_table", zebra_stripes=True, cursor_type="row")
+                        yield PlayTable(id="plan_table", zebra_stripes=True, cursor_type="row")
                     with TabPane("Promo", id="tab-promo"):
                         yield Static("Short clips of single songs, cut from a finished mix video. "
                                      "Enter/click toggles a song ✓, then Export (e).", id="promo_hint")
@@ -162,13 +193,22 @@ class DJMix(App):
                             yield Switch(True, id="promo_card")
                             yield Button("All", id="promo_all")
                             yield Button("Export [e]", id="promo_export", variant="success")
-                        yield DataTable(id="promo_table", zebra_stripes=True, cursor_type="row")
+                        yield PlayTable(id="promo_table", zebra_stripes=True, cursor_type="row")
                     with TabPane("History", id="tab-history"):
                         yield Static("Every render made in this folder. Enter/click a row to load its "
                                      "settings (and pick it for promos).", id="history_hint")
-                        yield DataTable(id="history_table", zebra_stripes=True, cursor_type="row")
+                        yield PlayTable(id="history_table", zebra_stripes=True, cursor_type="row")
                     with TabPane("Log", id="tab-log"):
                         yield RichLog(id="log", wrap=True, markup=True)
+                with Horizontal(id="player"):
+                    yield Button("⏪", id="pl_back", classes="pl")
+                    yield Button("▶", id="pl_toggle", classes="pl")
+                    yield Button("⏩", id="pl_fwd", classes="pl")
+                    yield Button("⏹", id="pl_stop", classes="pl")
+                    yield Static("Double-click a song, mix or promo row to listen", id="pl_now")
+                    yield Button("−", id="pl_vdown", classes="pl")
+                    yield Static("80%", id="pl_vol")
+                    yield Button("+", id="pl_vup", classes="pl")
                 yield ProgressBar(id="progress", total=100, show_eta=False)
                 yield Static("", id="status")
         yield Footer()
@@ -183,6 +223,7 @@ class DJMix(App):
         self.query_one("#history_table", DataTable).add_columns(
             "When", "Output", "Length", "Seed", "Preset", "Beatmatched", "Render time", "Promos", "")
         self.promo_sel, self.renders, self.clips = set(), [], {}
+        self.set_interval(0.25, self.player_tick)
         self.skip_preset_change = None
         self.ready = False
         for wid in COLOR_FIELDS:
@@ -271,6 +312,8 @@ class DJMix(App):
 
     def load_folder(self, path):
         """Open a folder and pick up where we left off there."""
+        if self.busy and path == getattr(self, "current_folder", None):
+            return                                    # e.g. the 2nd click of a double-click
         if self.busy:
             self.notify("Wait for the current job to finish before switching folders", severity="warning")
             return
@@ -362,8 +405,10 @@ class DJMix(App):
 
     @on(Button.Pressed)
     def button(self, event):
-        {"analyze": self.action_analyze, "plan": self.action_plan, "render": self.action_render,
-         "promo_export": self.action_export, "promo_all": self.promo_all}[event.button.id]()
+        fn = {"analyze": self.action_analyze, "plan": self.action_plan, "render": self.action_render,
+              "promo_export": self.action_export, "promo_all": self.promo_all}.get(event.button.id)
+        if fn:
+            fn()
 
     def start(self, what):
         if self.busy:
@@ -431,7 +476,8 @@ class DJMix(App):
             if tr["clean_end"] < tr["duration"] - 1:
                 bd = f"choppy from {fmt_time(tr['clean_end'])}" + ("" if settings.cut_breakdowns else " (kept)")
             t.add_row(tr["file"], tr["song"], f"{tr['bpm']:.1f}", f"{tr['wander']:.2f}",
-                      f"{tr['key']} {tr['camelot']}", f"{tr['lufs']:.1f}", fmt_time(tr["duration"]), bd)
+                      f"{tr['key']} {tr['camelot']}", f"{tr['lufs']:.1f}", fmt_time(tr["duration"]), bd,
+                      key=tr["file"])
         self.query_one("#tabs", TabbedContent).active = "tab-tracks"
         self.done(f"{len(tracks)} tracks analyzed")
         if getattr(self, "resume", None) is not None:      # reopen where we left off: show that plan
@@ -475,7 +521,7 @@ class DJMix(App):
                     how = f"beatmatch {x['bars']} bars, {100 * (x['rb'] - 1):+.1f}%"
                 else:
                     how = "crossfade"
-            t.add_row(str(i + 1), tr["file"], f"{tr['bpm']:.1f}", tr["camelot"], at, how)
+            t.add_row(str(i + 1), tr["file"], f"{tr['bpm']:.1f}", tr["camelot"], at, how, key=tr["file"])
         self.query_one("#tabs", TabbedContent).active = "tab-plan"
         self.done(f"Seed {seed}: ~{fmt_time(length)}, {beat}/{len(steps)} transitions beatmatched. "
                   f"Render keeps this order.")
@@ -603,12 +649,26 @@ class DJMix(App):
         except Exception:
             pass
 
+    def unless_double(self, table, fn):
+        """Run fn for a row selection, but if it came from a mouse click, wait
+        briefly: a second click makes it a double-click (play) instead."""
+        ts = table.click_at
+        if table.double_at == ts:                   # this selection IS the double-click
+            return
+        if time.monotonic() - ts < 0.1:             # from a click: wait for a possible 2nd
+            self.set_timer(0.35, lambda: fn() if table.double_at < ts else None)
+        else:                                       # keyboard: act now
+            fn()
+
     @on(DataTable.RowSelected, "#promo_table")
-    def promo_toggle(self, event):
-        i = int(event.row_key.value)
+    def promo_toggle_event(self, event):
+        self.unless_double(event.data_table, lambda k=event.row_key: self.promo_toggle(k))
+
+    def promo_toggle(self, row_key):
+        i = int(row_key.value)
         self.promo_sel ^= {i}
         t = self.query_one("#promo_table", DataTable)
-        t.update_cell(event.row_key, t.ordered_columns[0].key, "✓" if i in self.promo_sel else "")
+        t.update_cell(row_key, t.ordered_columns[0].key, "✓" if i in self.promo_sel else "")
 
     def promo_all(self):
         r = self.render_by_id(self.val("promo_render"))
@@ -621,8 +681,11 @@ class DJMix(App):
             t.update_cell(str(i), t.ordered_columns[0].key, "✓" if i in self.promo_sel else "")
 
     @on(DataTable.RowSelected, "#history_table")
-    def history_pick(self, event):
-        r = self.render_by_id(event.row_key.value)
+    def history_pick_event(self, event):
+        self.unless_double(event.data_table, lambda k=event.row_key: self.history_pick(k))
+
+    def history_pick(self, row_key):
+        r = self.render_by_id(row_key.value)
         if not r:
             return
         self.apply_settings(r)
@@ -668,6 +731,99 @@ class DJMix(App):
                                          f"in [b]{fmt_time(self.elapsed())}[/b]")
         self.call_from_thread(self.refresh_history, folder)
         self.call_from_thread(self.fill_promo_table)
+
+    # ------------------------------------------------------------ mini player
+    @on(DataTable.RowSelected, "#tracks")
+    @on(DataTable.RowSelected, "#plan_table")
+    def enter_plays(self, event):
+        """Tracks / Plan: Enter plays the song (mouse: only a double-click plays)."""
+        if time.monotonic() - event.data_table.click_at > 0.1:
+            self.play_row(event.data_table.id, event.row_key)
+
+    @on(PlayTable.Play)
+    def double_click_plays(self, event):
+        self.play_row(event.table.id, event.row_key)
+
+    def play_row(self, table_id, row_key):
+        folder = getattr(self, "current_folder", "")
+        if table_id in ("tracks", "plan_table"):
+            f = row_key.value
+            self.player.play(os.path.join(folder, f), os.path.splitext(f)[0])
+        elif table_id == "history_table":
+            r = self.render_by_id(row_key.value)
+            out = r and (r.get("video") or r.get("audio"))
+            if not (r and r["exists"]):
+                self.notify("That render's file isn't in the folder any more", severity="warning")
+                return
+            self.player.play(os.path.join(folder, out), f"Mix · {out}")
+        elif table_id == "promo_table":
+            r = self.render_by_id(self.val("promo_render"))
+            if r:
+                self.preview_clip(folder, r, int(row_key.value), self.promo_length())
+        self.player_tick()
+
+    @work(thread=True, group="clip-preview", exclusive=True)
+    def preview_clip(self, folder, r, i, length):
+        """Play exactly the part of the mix a promo clip would use."""
+        from . import promo
+        song = r["timeline"][i]
+        video = os.path.join(folder, r["video"])
+        start, L, _ = promo.choose_clip(video, song, length, r.get("titles", True))
+        self.call_from_thread(self.player.play, video, f"Promo · {song['title']}", start, start + L)
+
+    def player_tick(self):
+        p = self.player
+        if p._stream and p.finished:
+            p.stop()                                  # reached the end (keeps the file for replay)
+        self.query_one("#pl_toggle", Button).label = "⏸" if p.playing else "▶"
+        self.query_one("#pl_vol", Static).update(f"{round(p.volume * 100)}%")
+        if not p.path:
+            return
+        lo = p._clip_start if p._end is not None else 0.0
+        hi = max(p.length, lo + 0.01)
+        pos = min(max(p.position if not p.finished else hi, lo), hi)
+        from rich.markup import escape
+        state = "paused · " if p.paused else ("done · " if p.finished else "")
+        times = f"{fmt_time(pos - lo)}  {fmt_time(hi - lo)}"
+        room = max(20, self.query_one("#pl_now", Static).size.width - 2)
+        title = p.title if len(p.title) <= room // 2 else p.title[:room // 2 - 1] + "…"
+        width = max(6, room - len(state) - len(title) - len(times) - 4)   # the bar gets what's left
+        fill = min(width, round(width * (pos - lo) / (hi - lo)))
+        bar = "━" * fill + "●" + "─" * (width - fill)
+        t0, t1 = times.split("  ")
+        self.query_one("#pl_now", Static).update(
+            f"{state}[b]{escape(title)}[/b]  {t0} {bar} {t1}")
+
+    def action_play_pause(self):
+        if not self.player.path:
+            self.notify("Double-click a song to play it")
+            return
+        self.player.toggle()
+        self.player_tick()
+
+    def action_seek(self, seconds):
+        self.player.seek(float(seconds))
+        self.player_tick()
+
+    def action_volume(self, delta):
+        self.player.set_volume(self.player.volume + float(delta))
+        self.player_tick()
+
+    @on(Button.Pressed, ".pl")
+    def player_button(self, event):
+        event.stop()
+        {"pl_back": lambda: self.action_seek(-10), "pl_toggle": self.action_play_pause,
+         "pl_fwd": lambda: self.action_seek(10), "pl_stop": self.player_stop,
+         "pl_vdown": lambda: self.action_volume(-0.1), "pl_vup": lambda: self.action_volume(0.1)}[event.button.id]()
+
+    def player_stop(self):
+        self.player.stop()
+        self.player.path = None
+        self.query_one("#pl_now", Static).update("Double-click a song, mix or promo row to listen")
+        self.player_tick()
+
+    def on_unmount(self):
+        self.player.stop()
 
     def failed(self, e):
         self.log_line(f"[red]Error: {e}")
