@@ -348,6 +348,15 @@ class DJMix(App):
         self.promo_sel = set()
         self.action_analyze()
 
+    def resume_from_newest(self, folder):
+        """First open of a folder that already had mixes: pick up from the newest one."""
+        if self.resume is not None or history.load(folder)["last"].get("seed") is not None:
+            return
+        newest = max(history.load(folder)["renders"], key=lambda r: r.get("created", ""), default=None)
+        if newest and newest.get("seed") is not None:
+            self.apply_settings(newest)
+            self.resume = newest["seed"]
+
     def apply_settings(self, r):
         """Put saved mix settings (from history) into the form."""
         preset = r.get("preset") or DEFAULT_PRESET
@@ -461,10 +470,12 @@ class DJMix(App):
         log = lambda m: self.call_from_thread(self.log_line, m, folder)
         try:
             tracks = pipeline.analyze(folder, settings, log=log)
-            pipeline.adopt_legacy(folder, log=log)
+            adopted = pipeline.adopt_legacy(folder, log=log)
         except Exception as e:
             self.call_from_thread(self.failed, e)
             return
+        if adopted:
+            self.call_from_thread(self.resume_from_newest, folder)
         self.call_from_thread(self.show_tracks, tracks, settings)
         self.call_from_thread(self.refresh_history, folder)
 
