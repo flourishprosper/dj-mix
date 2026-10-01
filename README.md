@@ -19,6 +19,7 @@ tempo-locked, downbeat-aligned, bass-swapped transitions — then renders the vi
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple)
 ![Interface](https://img.shields.io/badge/interface-terminal%20UI-8A2BE2)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
 [Install](#-install) · [Your first mix](#-your-first-mix-step-by-step) · [Features](#-feature-tour) · [CLI](#-command-line) · [How it works](#-how-it-works) · [FAQ](#-troubleshooting)
 
@@ -523,6 +524,21 @@ the real interface and regenerates everything in `docs/images/`.
 
 > Note: librosa's `beat_track` segfaults (numba) on some macOS setups, so dj-mix uses its own
 > dynamic-programming beat tracker.
+
+---
+
+## 📄 License
+
+dj-mix is free software under the **[GNU Affero General Public License v3.0](LICENSE)** (AGPL-3.0-or-later).
+
+In plain terms:
+
+- ✅ Use it for anything, including commercial work: mixes, videos and promo clips you make are **yours**.
+- ✅ Study it, modify it, share it.
+- 🔁 If you **distribute** a modified version, or **run a modified version as an online service**, you must
+  release your changes' source code under the same license.
+
+Copyright © 2026 Flourish$Prosper Music Group.
 
 ---
 
