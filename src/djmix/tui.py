@@ -17,6 +17,7 @@ from textual.widgets import (Button, DataTable, DirectoryTree, Footer, Header, I
 from . import config, history
 from .brand import POSITIONS, Brand
 from .presets import DEFAULT_PRESET, PRESETS, Settings
+from .logstyle import LogHighlighter
 from .util import display_title, fmt_time, list_videos, missing_tools
 
 AUDIO_ONLY = "__audio_only__"
@@ -187,6 +188,7 @@ class DJMix(App):
         self.start_folder = folder or self.ui.get("folder", "")
         self.busy = False
         self.logs = {}                       # folder -> this session's log lines
+        self.loghl = LogHighlighter()        # colors for the Log tab
         from .player import Player
         self.player = Player()
 
@@ -320,13 +322,29 @@ class DJMix(App):
         folder = folder or getattr(self, "current_folder", "")
         self.logs.setdefault(folder, []).append(msg)
         if folder == getattr(self, "current_folder", ""):
-            self.query_one("#log", RichLog).write(msg)
+            self.query_one("#log", RichLog).write(self.styled(msg))
+
+    def styled(self, msg):
+        """Plain text (brackets are content, not markup) + log colors."""
+        from rich.text import Text
+        t = Text(str(msg))
+        self.loghl.highlight(t)
+        return t
+
+    def update_log_names(self, folder):
+        """Track/file names in the folder, so the log can color them exactly."""
+        try:
+            files = [f for f in os.listdir(folder) if not f.startswith(".")]
+        except OSError:
+            files = []
+        self.loghl.set_names(files + [display_title(f) for f in files])
 
     def show_folder_log(self, folder):
-        """Log tab = this folder's saved diary (dimmed) + this session's output here."""
+        """Log tab = this folder's saved diary + this session's output here, colored."""
         from rich.text import Text
         log = self.query_one("#log", RichLog)
         log.clear()
+        self.update_log_names(folder)
         log.write(Text(f"Log — {os.path.basename(folder)}", style="bold"))
         try:
             with open(os.path.join(folder, history.DIRNAME, "log.txt")) as f:
@@ -336,12 +354,12 @@ class DJMix(App):
         if diary:
             log.write(Text("── earlier in this folder ──", style="dim"))
             for line in diary:
-                log.write(Text(line, style="dim"))
+                log.write(self.styled(line))
         session = self.logs.get(folder, [])
         if session:
             log.write(Text("── this session ──", style="dim"))
             for line in session:
-                log.write(line)
+                log.write(self.styled(line))
         if not diary and not session:
             log.write(Text("No saved history in this folder yet.", style="dim"))
 
@@ -572,6 +590,7 @@ class DJMix(App):
                       key=tr["file"])
         before = getattr(self, "track_count", None)
         self.track_count = len(tracks)
+        self.update_log_names(getattr(self, "current_folder", ""))
         self.warn_convertible()
         if switch_tab:
             self.query_one("#tabs", TabbedContent).active = "tab-tracks"
@@ -1012,7 +1031,7 @@ class DJMix(App):
         self.player.stop()
 
     def failed(self, e):
-        self.log_line(f"[red]Error: {e}")
+        self.log_line(f"Error: {e}")
         self.done(f"[red]Failed: {e}")
         self.notify(str(e), severity="error", timeout=10)
 
