@@ -151,10 +151,12 @@ dj-mix
 The interface opens in your terminal. Three areas:
 
 - **Top left — Music folders.** Browse with the arrow keys, press **Enter** on a folder to open it.
+  **Right-click** a folder for *Open in Finder*, *Open in dj-mix* and *Refresh*. Added new folders, tracks or
+  loop videos? Press **F5** (or the ⟳ button next to the folder path) to pick them up.
 - **Left — Options.** Everything you can set, grouped into *Mixing*, *Output* and *Brand*.
 - **Right — Results.** Tabs for **Tracks**, **Plan** and **Log**, with a progress bar and status line underneath.
 
-Keys: **`a`** Analyze · **`p`** Plan · **`r`** Render · **`e`** Export promos · **`q`** Quit. You can also click everything.
+Keys: **`a`** Analyze · **`p`** Plan · **`r`** Render · **`e`** Export promos · **`F5`** Refresh · **`q`** Quit. You can also click everything.
 
 > 🎧 **Listen as you go.** Double-click any row to hear it in the mini player at the bottom:
 > a song in **Tracks** or **Plan** plays the original track, a render in **History** plays the finished mix,

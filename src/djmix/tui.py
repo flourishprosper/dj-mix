@@ -1,5 +1,5 @@
 """Terminal interface: pick a folder, set options, preview the plan, render."""
-import os, time
+import os, subprocess, sys, time
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -7,6 +7,9 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
+from textual.screen import ModalScreen
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
 from textual.widgets import (Button, DataTable, DirectoryTree, Footer, Header, Input, Label,
                              ProgressBar, RichLog, Select, Static, Switch, TabbedContent, TabPane)
 
@@ -22,8 +25,73 @@ class FolderTree(DirectoryTree):
     # Space is play/pause everywhere; the tree would otherwise use it to fold a folder
     BINDINGS = [("space", "app.play_pause", "Play/Pause")]
 
+    class Menu(Message):
+        """Right-click on a folder: show the folder menu at the mouse."""
+        def __init__(self, path, x, y):
+            super().__init__()
+            self.path, self.x, self.y = path, x, y
+
     def filter_paths(self, paths):
         return [p for p in paths if p.is_dir() and not p.name.startswith((".", "_", "MIX_"))]
+
+    async def _on_click(self, event):
+        # Textual also runs Tree's own click handler (it opens the folder) unless
+        # the default is prevented, so left-clicks just fall through to it.
+        if event.button != 3:
+            return
+        event.prevent_default()                   # right-click: menu, don't open the folder
+        event.stop()
+        line = event.style.meta.get("line")
+        node = self.get_node_at_line(line) if line is not None else self.cursor_node
+        if node is not None and node.data is not None:
+            self.cursor_line = node.line
+            self.post_message(self.Menu(str(node.data.path), event.screen_x, event.screen_y))
+
+
+FILE_MANAGER = "Finder" if sys.platform == "darwin" else "Explorer" if os.name == "nt" else "file manager"
+
+
+def reveal(path):
+    """Open a folder in Finder (or the system file manager)."""
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif os.name == "nt":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+class ContextMenu(ModalScreen):
+    """A small pop-up menu at the mouse position. Dismisses with the chosen id."""
+    DEFAULT_CSS = """
+    ContextMenu { background: transparent; }
+    ContextMenu OptionList { width: 30; height: auto; max-height: 12; border: round $accent;
+                             background: $panel; padding: 0; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Close")]
+
+    def __init__(self, title, items, x, y):
+        super().__init__()
+        self.title_text, self.items, self.at = title, items, (x, y)
+
+    def compose(self):
+        menu = OptionList(*[Option(label, id=key) for label, key in self.items], id="menu")
+        menu.border_title = self.title_text
+        yield menu
+
+    def on_mount(self):
+        menu = self.query_one(OptionList)
+        x, y = self.at
+        w, h = 30, len(self.items) + 2
+        menu.styles.offset = (max(0, min(x, self.size.width - w)), max(0, min(y, self.size.height - h)))
+        menu.focus()
+
+    def on_option_list_option_selected(self, event):
+        self.dismiss(event.option.id)
+
+    def on_click(self, event):
+        if not self.query_one(OptionList).region.contains(event.screen_x, event.screen_y):
+            self.dismiss(None)                    # clicked outside the menu
 
 
 COLOR_FIELDS = ("accent", "text_color")
@@ -97,9 +165,10 @@ class DJMix(App):
     #player .pl { min-width: 5; width: 5; margin: 0 1 0 0; }
     #pl_now { width: 1fr; padding: 1 1 0 1; }
     #pl_vol { width: 5; padding: 1 0 0 0; content-align: center top; }
+    #refresh { min-width: 5; width: 5; margin: 0 0 0 1; }
     """
     BINDINGS = [("a", "analyze", "Analyze"), ("p", "plan", "Plan"),
-                ("r", "render", "Render"), ("e", "export", "Export promos"), ("q", "quit", "Quit"),
+                ("r", "render", "Render"), ("e", "export", "Export promos"), ("f5", "refresh", "Refresh"), ("q", "quit", "Quit"),
                 ("space", "play_pause", "Play/Pause"), ("[", "seek(-10)", "−10s"), ("]", "seek(10)", "+10s"),
                 ("minus", "volume(-0.1)", "Vol −"), ("equals_sign", "volume(0.1)", "Vol +")]
 
@@ -128,10 +197,13 @@ class DJMix(App):
         with Horizontal():
             with Vertical(id="left"):
                 tree = FolderTree(root, id="browser")
-                tree.border_title = "Music folders · Enter to open"
+                tree.border_title = "Music folders · Enter opens · right-click: menu"
                 yield tree
                 with VerticalScroll(id="options"):
-                    yield row("Folder", Input(self.start_folder, id="folder", placeholder="path to a folder of tracks"))
+                    yield Horizontal(Label("Folder", classes="lbl"),
+                                     Input(self.start_folder, id="folder", placeholder="path to a folder of tracks"),
+                                     Button("⟳", id="refresh", tooltip="Refresh folders and files (F5)"),
+                                     classes="row")
 
                     yield Label("Mixing", classes="section")
                     yield row("Preset", Select([(k, k) for k in PRESETS],
@@ -320,11 +392,8 @@ class DJMix(App):
         self.current_folder = path
         self.show_folder_log(path)
         self.query_one("#folder", Input).value = path
-        vids = list_videos(path)
+        self.refresh_videos(path)
         sel = self.query_one("#video", Select)
-        opts = [(v, os.path.join(path, v)) for v in vids] + [("Audio only (no video)", AUDIO_ONLY)]
-        sel.set_options(opts)
-        sel.value = opts[0][1]
         self.query_one("#seed", Input).value = ""
         self.resume = None
         h = history.load(path)
@@ -356,6 +425,15 @@ class DJMix(App):
         if newest and newest.get("seed") is not None:
             self.apply_settings(newest)
             self.resume = newest["seed"]
+
+    def refresh_videos(self, path, keep=None):
+        """Fill the Video list from the folder, keeping `keep` selected if it's still there."""
+        vids = list_videos(path)
+        sel = self.query_one("#video", Select)
+        opts = [(v, os.path.join(path, v)) for v in vids] + [("Audio only (no video)", AUDIO_ONLY)]
+        sel.set_options(opts)
+        values = [v for _, v in opts]
+        sel.value = keep if keep in values else values[0]
 
     def apply_settings(self, r):
         """Put saved mix settings (from history) into the form."""
@@ -415,6 +493,7 @@ class DJMix(App):
     @on(Button.Pressed)
     def button(self, event):
         fn = {"analyze": self.action_analyze, "plan": self.action_plan, "render": self.action_render,
+              "refresh": self.action_refresh,
               "promo_export": self.action_export, "promo_all": self.promo_all}.get(event.button.id)
         if fn:
             fn()
@@ -465,7 +544,7 @@ class DJMix(App):
             self.run_analyze(folder, self.settings())
 
     @work(thread=True, group="job")
-    def run_analyze(self, folder, settings):
+    def run_analyze(self, folder, settings, switch_tab=True):
         from . import pipeline
         log = lambda m: self.call_from_thread(self.log_line, m, folder)
         try:
@@ -476,10 +555,10 @@ class DJMix(App):
             return
         if adopted:
             self.call_from_thread(self.resume_from_newest, folder)
-        self.call_from_thread(self.show_tracks, tracks, settings)
+        self.call_from_thread(self.show_tracks, tracks, settings, switch_tab)
         self.call_from_thread(self.refresh_history, folder)
 
-    def show_tracks(self, tracks, settings):
+    def show_tracks(self, tracks, settings, switch_tab=True):
         t = self.query_one("#tracks", DataTable)
         t.clear()
         for tr in sorted(tracks, key=lambda x: x["bpm"]):
@@ -489,8 +568,14 @@ class DJMix(App):
             t.add_row(tr["file"], tr["song"], f"{tr['bpm']:.1f}", f"{tr['wander']:.2f}",
                       f"{tr['key']} {tr['camelot']}", f"{tr['lufs']:.1f}", fmt_time(tr["duration"]), bd,
                       key=tr["file"])
-        self.query_one("#tabs", TabbedContent).active = "tab-tracks"
-        self.done(f"{len(tracks)} tracks analyzed")
+        before = getattr(self, "track_count", None)
+        self.track_count = len(tracks)
+        if switch_tab:
+            self.query_one("#tabs", TabbedContent).active = "tab-tracks"
+            self.done(f"{len(tracks)} tracks analyzed")
+        else:
+            new = "" if before is None else f" ({len(tracks) - before:+d})" if len(tracks) != before else ""
+            self.done(f"Refreshed: {len(tracks)} tracks{new}")
         if getattr(self, "resume", None) is not None:      # reopen where we left off: show that plan
             self.resume = None
             self.call_after_refresh(self.action_plan)
@@ -742,6 +827,40 @@ class DJMix(App):
                                          f"in [b]{fmt_time(self.elapsed())}[/b]")
         self.call_from_thread(self.refresh_history, folder)
         self.call_from_thread(self.fill_promo_table)
+
+    # ------------------------------------------------------------ refresh + folder menu
+    async def action_refresh(self):
+        """Re-read the folder browser and the open folder (new tracks, videos, renders)."""
+        tree = self.query_one("#browser", FolderTree)
+        await tree.reload()
+        folder = getattr(self, "current_folder", None)
+        if not folder or not os.path.isdir(folder):
+            self.notify("Folder list refreshed")
+            return
+        if self.busy:
+            self.notify("Folder list refreshed; the open folder will refresh when the current job is done")
+            return
+        self.refresh_videos(folder, keep=self.val("video"))
+        if self.start("Refreshing…"):
+            self.run_analyze(folder, self.settings(), False)
+
+    @on(FolderTree.Menu)
+    def folder_menu(self, event):
+        path = event.path
+        items = [(f"Open in {FILE_MANAGER}", "reveal"), ("Open in dj-mix", "open"), ("Refresh", "refresh")]
+        self.push_screen(ContextMenu(os.path.basename(path) or path, items, event.x, event.y),
+                         lambda choice: self.folder_menu_choice(choice, path))
+
+    def folder_menu_choice(self, choice, path):
+        if choice == "reveal":
+            try:
+                reveal(path)
+            except Exception as e:
+                self.notify(f"Couldn't open {FILE_MANAGER}: {e}", severity="error")
+        elif choice == "open":
+            self.load_folder(path)
+        elif choice == "refresh":
+            self.run_worker(self.action_refresh(), exclusive=False)
 
     # ------------------------------------------------------------ mini player
     @on(DataTable.RowSelected, "#tracks")
