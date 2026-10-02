@@ -134,11 +134,16 @@ Put the tracks you want in the set into one folder, plus **one looping video cli
 ├── Room Echo Romance.mp3
 ├── Twang in the Shade.mp3
 ├── 86 BPM Boulevard.mp3
-├── …                              ← as many tracks as you like (mp3, wav, flac, m4a, aif)
+├── …                              ← as many tracks as you like (mp3, wav, flac, aiff)
 └── impala-loop-30s.mp4           ← any seamless loop (mp4 or mov); it repeats for the whole mix
 ```
 
 No video? That's fine — you can render **audio only**.
+
+> 🎵 **Got .m4a files?** Newer Suno downloads (and other sources) come as M4A/AAC/Opus/OGG, which dj-mix
+> can't analyze directly. It lists only the files it can mix and **warns you** when others are present. Press
+> **`c`** in the app (or run `dj-mix convert FOLDER`) to turn them into 320 kbps MP3s with their metadata
+> intact. The originals are moved into `_converted-originals/`, never deleted.
 
 > 💡 Tip: a 10–30 second clip that loops seamlessly looks best. The clip is repeated to cover the whole mix.
 
@@ -348,6 +353,7 @@ dj-mix plan FOLDER              # order + every transition, no rendering
 dj-mix mix FOLDER [options]     # render the mix (and video)
 dj-mix promo FOLDER [options]   # cut promo clips of songs from a rendered mix
 dj-mix history FOLDER           # every render and promo made in a folder
+dj-mix convert FOLDER           # m4a/AAC/Opus/OGG/WMA -> 320k MP3 (originals kept in _converted-originals/)
 dj-mix titles MIX.mp4           # add title cards / watermark to an existing mix video
 ```
 
@@ -514,6 +520,7 @@ uv run dj-mix          # run from the checkout
 | `promo.py` | song timelines in a mix, clip placement, promo export |
 | `history.py` | per-folder history, log and resume |
 | `player.py` | the mini player (ffmpeg decode → sounddevice output) |
+| `convert.py` | converting m4a/AAC/Opus/OGG/WMA to MP3 |
 | `presets.py` | **genre presets — start here to add a genre** |
 | `pipeline.py` | analyze → plan → render → encode, shared by CLI and interface |
 | `cli.py` / `tui.py` | command line and Textual interface |

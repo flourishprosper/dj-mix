@@ -72,6 +72,13 @@ def brand_from(args):
 
 
 def main(argv=None):
+    try:
+        _main(argv)
+    except RuntimeError as e:          # expected problems (no audio, nothing rendered…): no traceback
+        sys.exit(f"dj-mix: {e}")
+
+
+def _main(argv=None):
     ap = argparse.ArgumentParser(prog="dj-mix", description="Beat-matched DJ mixes from a folder of tracks.")
     sub = ap.add_subparsers(dest="cmd")
 
@@ -102,6 +109,12 @@ def main(argv=None):
     p.add_argument("--format", choices=["vertical", "square", "original"], default="vertical")
     p.add_argument("--no-card", action="store_true", help="no title card on the clips")
     add_brand_options(p)
+
+    p = sub.add_parser("convert", help="convert m4a/AAC/Opus/OGG/WMA audio in a folder to MP3")
+    p.add_argument("folder")
+    p.add_argument("--bitrate", default="320k", help="MP3 bitrate (default 320k)")
+    p.add_argument("--keep-originals-in-place", action="store_true",
+                   help="leave the originals where they are (default: move to _converted-originals/)")
 
     p = sub.add_parser("history", help="list renders and promos made in a folder")
     p.add_argument("folder")
@@ -149,6 +162,11 @@ def main(argv=None):
         promo_cmd(args)
     elif args.cmd == "history":
         history_cmd(args)
+    elif args.cmd == "convert":
+        from .convert import convert_folder
+        res = convert_folder(args.folder, args.bitrate, not args.keep_originals_in_place)
+        if any(r != "ok" and not r.startswith("skipped") for r in res.values()):
+            sys.exit(1)
 
 
 def promo_cmd(args):

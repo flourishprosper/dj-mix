@@ -9,7 +9,7 @@ from functools import partial
 
 import numpy as np
 
-from .util import PITCHES, camelot, integrated_lufs, list_tracks, song_id
+from .util import PITCHES, camelot, integrated_lufs, list_tracks, song_id, song_key
 
 ASR = 22050           # analysis rate
 HOP = 256
@@ -95,10 +95,34 @@ def find_breakdown(y, dur, win_s=5.0):
     return dur
 
 
+def load_mono(path):
+    """Mono audio at the analysis rate. librosa reads mp3/wav/flac/aiff; anything
+    it can't open (e.g. Opus or AAC in .m4a) is decoded with ffmpeg instead."""
+    import librosa
+    try:
+        y, _ = librosa.load(path, sr=ASR, mono=True)
+        return y
+    except Exception:
+        import subprocess
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1",
+                              "-ar", str(ASR), "-f", "f32le", "-"], check=True, capture_output=True).stdout
+        return np.frombuffer(raw, dtype=np.float32).copy()
+
+
 def analyze_track(path, tempo_prior=(88, 0.35, 50, 200)):
+    """Analyze one file; never raises (a bad file is reported, not fatal)."""
+    try:
+        return _analyze_track(path, tempo_prior)
+    except Exception as e:
+        return dict(file=os.path.basename(path), ok=False, reason=f"couldn't read: {str(e)[:120]}")
+
+
+def _analyze_track(path, tempo_prior):
     import librosa
 
-    y, _ = librosa.load(path, sr=ASR, mono=True)
+    y = load_mono(path)
+    if len(y) < ASR * 10:
+        return dict(file=os.path.basename(path), ok=False, reason="shorter than 10 s")
     dur = len(y) / ASR
     onset = librosa.onset.onset_strength(y=y, sr=ASR, hop_length=HOP)
     bpm0 = estimate_tempo(onset, *tempo_prior)
@@ -165,8 +189,12 @@ def analyze_folder(folder, tempo_prior=(88, 0.35, 50, 200), progress=print):
             for n, (f, r) in enumerate(zip(todo, ex.map(job, [os.path.join(folder, f) for f in todo])), 1):
                 r["_sig"] = sig[f]
                 cache[f] = r
-                progress(f"  [{n}/{len(todo)}] {f}")
+                progress(f"  [{n}/{len(todo)}] {f}" + ("" if r.get("ok") else f"  — skipped: {r.get('reason')}"))
         cache = {f: cache[f] for f in files}
         with open(cache_path, "w") as fh:
             json.dump(cache, fh)
-    return [cache[f] for f in files]
+    out = [cache[f] for f in files]
+    for t in out:                       # older caches: group takes the current way
+        if t.get("ok"):
+            t["song"] = song_key(t["song"])
+    return out

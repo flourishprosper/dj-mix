@@ -2,7 +2,8 @@ import os, re, subprocess
 
 import numpy as np
 
-AUDIO_EXT = (".mp3", ".wav", ".flac", ".m4a", ".aif", ".aiff")
+AUDIO_EXT = (".mp3", ".wav", ".flac", ".aif", ".aiff")          # what dj-mix mixes
+CONVERTIBLE_EXT = (".m4a", ".aac", ".opus", ".ogg", ".oga", ".wma", ".webm")  # `dj-mix convert` -> mp3
 VIDEO_EXT = (".mp4", ".mov")
 SR = 48000            # render rate
 
@@ -47,6 +48,21 @@ def camelot_cost(a, b):
     return 1 if d == 0 else d + 1.5
 
 
+UUID_SUFFIX = re.compile(r"\s*-\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def display_title(file):
+    """A track's title for tracklists, title cards and the player: the file name
+    without extension or a trailing download id ("Song - 7a1371ec-0e85-...")."""
+    return UUID_SUFFIX.sub("", os.path.splitext(os.path.basename(file))[0]).strip()
+
+
+def song_key(name):
+    """Group alternate takes: drop download ids and take numbers like "(1)"."""
+    name = UUID_SUFFIX.sub("", name)
+    return re.sub(r"\s*\(\d+\)$", "", name).strip().lower()
+
+
 def song_id(path):
     """Song identity from the embedded title tag (survives file renames),
     with take numbers like "(1)" stripped so alternate takes group together."""
@@ -54,8 +70,7 @@ def song_id(path):
         title = probe(path, "format_tags=title")
     except subprocess.CalledProcessError:
         title = ""
-    base = title or os.path.splitext(os.path.basename(path))[0]
-    return re.sub(r"\s*\(\d+\)$", "", base).strip().lower()
+    return song_key(title or os.path.splitext(os.path.basename(path))[0])
 
 
 def integrated_lufs(path):

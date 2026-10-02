@@ -13,7 +13,7 @@ import numpy as np
 from . import brand as brandmod
 from . import history
 from .plan import downbeat_phase
-from .util import probe
+from .util import display_title, probe
 
 FORMATS = {
     "original": None,              # same frame as the mix
@@ -38,7 +38,7 @@ def build_timeline(order, segs):
             downbeats = [round(float(mix[i]), 3) for i in idx if i % 4 == ph]
         else:
             downbeats = []
-        out.append(dict(title=os.path.splitext(t["file"])[0], file=t["file"], song=t["song"],
+        out.append(dict(title=display_title(t["file"]), file=t["file"], song=t["song"],
                         start=seg["start"], full_in=seg["full_in"], out_start=seg["out_start"],
                         end=seg["end"], chapter=seg["chapter"], downbeats=downbeats))
     return out

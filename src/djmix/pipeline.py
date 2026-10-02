@@ -10,13 +10,24 @@ from .plan import dry_run, plan_order
 from .presets import PRESETS, Settings
 from .promo import build_timeline
 from .render import render
-from .util import fmt_time, list_videos
+from .util import display_title, fmt_time, list_videos
 
 
 def analyze(folder, settings, log=print):
-    tracks = [t for t in analyze_folder(folder, settings.tempo_prior, progress=log) if t.get("ok")]
+    from .convert import convertible, summary
+    todo = convertible(folder)
+    if todo:
+        log(f"⚠ {summary(todo)} can't be mixed until converted to MP3: "
+            f"run `dj-mix convert \"{folder}\"` (or press c in the app)")
+    every = analyze_folder(folder, settings.tempo_prior, progress=log)
+    tracks = [t for t in every if t.get("ok")]
+    skipped = [t for t in every if not t.get("ok")]
+    if skipped:
+        log(f"Skipped {len(skipped)} file(s): " + "; ".join(f"{t['file']} ({t.get('reason')})" for t in skipped))
     if not tracks:
-        raise RuntimeError(f"No usable audio in {folder}")
+        raise RuntimeError(f"No usable audio in {folder}"
+                           + (f" — {summary(todo)} can be converted to MP3 first (press c, or dj-mix convert)"
+                              if todo else ""))
     return tracks
 
 
@@ -64,7 +75,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
     tracklist = base + "_tracklist.txt"
     with open(tracklist, "w") as f:
         for ts, t in chapters:
-            f.write(f"{fmt_time(ts)} {os.path.splitext(t['file'])[0]}\n")
+            f.write(f"{fmt_time(ts)} {display_title(t['file'])}\n")
         f.write(f"\n(seed {seed}, preset {settings.preset.name}, {settings.bars} bars)\n")
     beat = sum("beatmatched" in n for n in notes)
     log(f"Mix length {fmt_time(dur)}; {beat}/{len(notes)} transitions beatmatched")
@@ -86,7 +97,7 @@ def mix(folder, settings, *, brand=None, titles=False, video=None, audio_only=Fa
         video = os.path.join(folder, vids[0])
     log(f"Encoding video over {os.path.basename(video)}"
         f"{' with title cards' if titles else ''}{' + watermark' if brand and brand.has_watermark else ''}...")
-    cards = [(ts, os.path.splitext(t["file"])[0]) for ts, t in chapters] if titles else []
+    cards = [(ts, display_title(t["file"])) for ts, t in chapters] if titles else []
     out = base + ".mp4"
     videomod.encode(video, wav, out, dur, cards=cards, brand=brand,
                     progress=(lambda f: progress(0.5 + 0.5 * f)) if progress else None)
@@ -142,7 +153,7 @@ def adopt_legacy(folder, log=print):
                     steps, length, segs = dry_run(order, settings)
                     chapters = [(0.0, order[0])] + [(st["at"], st["b"]) for st in steps]
                     ok = len(chapters) == len(stamps) and all(
-                        os.path.splitext(t["file"])[0] == title and abs(ts - s) <= 1.5
+                        display_title(t["file"]) == title and abs(ts - s) <= 1.5
                         for (ts, t), (s, title) in zip(chapters, stamps))
                     if ok:
                         record.update(timeline=build_timeline(order, segs), duration=length,

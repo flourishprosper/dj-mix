@@ -4,6 +4,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from textual import on, work
+from textual.binding import Binding
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
@@ -16,7 +17,7 @@ from textual.widgets import (Button, DataTable, DirectoryTree, Footer, Header, I
 from . import config, history
 from .brand import POSITIONS, Brand
 from .presets import DEFAULT_PRESET, PRESETS, Settings
-from .util import fmt_time, list_videos, missing_tools
+from .util import display_title, fmt_time, list_videos, missing_tools
 
 AUDIO_ONLY = "__audio_only__"
 
@@ -169,6 +170,7 @@ class DJMix(App):
     """
     BINDINGS = [("a", "analyze", "Analyze"), ("p", "plan", "Plan"),
                 ("r", "render", "Render"), ("e", "export", "Export promos"), ("f5", "refresh", "Refresh"), ("q", "quit", "Quit"),
+                Binding("c", "convert", "Convert to MP3", show=False),
                 ("space", "play_pause", "Play/Pause"), ("[", "seek(-10)", "−10s"), ("]", "seek(10)", "+10s"),
                 ("minus", "volume(-0.1)", "Vol −"), ("equals_sign", "volume(0.1)", "Vol +")]
 
@@ -565,11 +567,12 @@ class DJMix(App):
             bd = "-"
             if tr["clean_end"] < tr["duration"] - 1:
                 bd = f"choppy from {fmt_time(tr['clean_end'])}" + ("" if settings.cut_breakdowns else " (kept)")
-            t.add_row(tr["file"], tr["song"], f"{tr['bpm']:.1f}", f"{tr['wander']:.2f}",
+            t.add_row(display_title(tr["file"]), tr["song"], f"{tr['bpm']:.1f}", f"{tr['wander']:.2f}",
                       f"{tr['key']} {tr['camelot']}", f"{tr['lufs']:.1f}", fmt_time(tr["duration"]), bd,
                       key=tr["file"])
         before = getattr(self, "track_count", None)
         self.track_count = len(tracks)
+        self.warn_convertible()
         if switch_tab:
             self.query_one("#tabs", TabbedContent).active = "tab-tracks"
             self.done(f"{len(tracks)} tracks analyzed")
@@ -617,7 +620,8 @@ class DJMix(App):
                     how = f"beatmatch {x['bars']} bars, {100 * (x['rb'] - 1):+.1f}%"
                 else:
                     how = "crossfade"
-            t.add_row(str(i + 1), tr["file"], f"{tr['bpm']:.1f}", tr["camelot"], at, how, key=tr["file"])
+            t.add_row(str(i + 1), display_title(tr["file"]), f"{tr['bpm']:.1f}", tr["camelot"], at, how,
+                      key=tr["file"])
         self.query_one("#tabs", TabbedContent).active = "tab-plan"
         self.done(f"Seed {seed}: ~{fmt_time(length)}, {beat}/{len(steps)} transitions beatmatched. "
                   f"Render keeps this order.")
@@ -828,6 +832,52 @@ class DJMix(App):
         self.call_from_thread(self.refresh_history, folder)
         self.call_from_thread(self.fill_promo_table)
 
+    # ------------------------------------------------------------ converting to mp3
+    def warn_convertible(self, folder=None):
+        from .convert import convertible, summary
+        folder = folder or getattr(self, "current_folder", None)
+        todo = convertible(folder) if folder else []
+        if todo:
+            self.notify(f"{summary(todo)} in this folder can't be mixed yet. Press c to convert "
+                        f"{'it' if len(todo) == 1 else 'them'} to MP3 (originals are kept).",
+                        title="Files need converting", severity="warning", timeout=15)
+        return todo
+
+    def action_convert(self, folder=None):
+        from .convert import convertible, summary
+        folder = folder or self.folder()
+        if not folder:
+            return
+        todo = convertible(folder)
+        if not todo:
+            self.notify("Nothing to convert here: every audio file is already MP3/WAV/FLAC/AIFF")
+            return
+        if self.start(f"Converting {summary(todo)} to MP3…"):
+            self.query_one("#tabs", TabbedContent).active = "tab-log"
+            self.query_one("#progress", ProgressBar).update(progress=0)
+            self.run_convert(folder)
+
+    @work(thread=True, group="job")
+    def run_convert(self, folder):
+        from . import history
+        from .convert import convert_folder
+        try:
+            res = convert_folder(folder, log=lambda m: self.call_from_thread(self.log_line, m, folder),
+                                 progress=lambda f: self.call_from_thread(self.set_frac, f))
+        except Exception as e:
+            self.call_from_thread(self.failed, e)
+            return
+        ok = sum(r == "ok" for r in res.values())
+        history.log(folder, f"converted {ok}/{len(res)} file(s) to MP3 (originals in _converted-originals/)")
+        self.call_from_thread(self.done, f"Converted {ok}/{len(res)} file(s) to MP3 in "
+                                         f"[b]{fmt_time(self.elapsed())}[/b]")
+        if folder == getattr(self, "current_folder", None):
+            self.call_from_thread(self.after_convert, folder)
+
+    def after_convert(self, folder):
+        if self.start("Analyzing…"):                  # pick up the new MP3s
+            self.run_analyze(folder, self.settings())
+
     # ------------------------------------------------------------ refresh + folder menu
     async def action_refresh(self):
         """Re-read the folder browser and the open folder (new tracks, videos, renders)."""
@@ -847,7 +897,11 @@ class DJMix(App):
     @on(FolderTree.Menu)
     def folder_menu(self, event):
         path = event.path
+        from .convert import convertible
         items = [(f"Open in {FILE_MANAGER}", "reveal"), ("Open in dj-mix", "open"), ("Refresh", "refresh")]
+        n = len(convertible(path))
+        if n:
+            items.append((f"Convert {n} file{'s' if n != 1 else ''} to MP3", "convert"))
         self.push_screen(ContextMenu(os.path.basename(path) or path, items, event.x, event.y),
                          lambda choice: self.folder_menu_choice(choice, path))
 
@@ -861,6 +915,8 @@ class DJMix(App):
             self.load_folder(path)
         elif choice == "refresh":
             self.run_worker(self.action_refresh(), exclusive=False)
+        elif choice == "convert":
+            self.action_convert(path)
 
     # ------------------------------------------------------------ mini player
     @on(DataTable.RowSelected, "#tracks")
@@ -878,7 +934,7 @@ class DJMix(App):
         folder = getattr(self, "current_folder", "")
         if table_id in ("tracks", "plan_table"):
             f = row_key.value
-            self.player.play(os.path.join(folder, f), os.path.splitext(f)[0])
+            self.player.play(os.path.join(folder, f), display_title(f))
         elif table_id == "history_table":
             r = self.render_by_id(row_key.value)
             out = r and (r.get("video") or r.get("audio"))
